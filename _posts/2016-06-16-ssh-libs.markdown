@@ -1,0 +1,65 @@
+---
+layout: post
+title:  "How to solve the SSH libs warning while compiling on OS X"
+subtitle: 怎么解决OS-X上SSH库的警告
+author: 刘奎恩/Kuien
+date:   2016-06-16 11:49
+categories: coding
+published: true
+---
+
+__Under Mac__:
+
+## Problem
+
+When we compile source-codes with SSH function on Mac OS-X, I meet following warnings:
+
+```
+In file included from test/s3utils_test.cpp:1:
+src/s3utils.cpp:86:5: warning: 'HMAC_CTX_init' is deprecated: first deprecated in OS X 10.7 [-Wdeprecated-declarations]
+    HMAC_CTX_init(&hmac);
+    ^
+/usr/include/openssl/hmac.h:90:6: note: 'HMAC_CTX_init' has been explicitly marked deprecated here
+void HMAC_CTX_init(HMAC_CTX *ctx) DEPRECATED_IN_MAC_OS_X_VERSION_10_7_AND_LATER;
+     ^
+In file included from test/s3utils_test.cpp:1:
+src/s3utils.cpp:87:45: warning: 'EVP_sha1' is deprecated: first deprecated in OS X 10.7 [-Wdeprecated-declarations]
+    HMAC_Init_ex(&hmac, secret, secret_len, EVP_sha1(), NULL);
+                                            ^
+/usr/include/openssl/evp.h:666:15: note: 'EVP_sha1' has been explicitly marked deprecated here
+const EVP_MD *EVP_sha1(void) DEPRECATED_IN_MAC_OS_X_VERSION_10_7_AND_LATER;
+              ^
+In file included from test/s3utils_test.cpp:1:
+src/s3utils.cpp:87:5: warning: 'HMAC_Init_ex' is deprecated: first deprecated in OS X 10.7 [-Wdeprecated-declarations]
+    HMAC_Init_ex(&hmac, secret, secret_len, EVP_sha1(), NULL);
+    ^
+/usr/include/openssl/hmac.h:97:6: note: 'HMAC_Init_ex' has been explicitly marked deprecated here
+void HMAC_Init_ex(HMAC_CTX *ctx, const void *key, int len,
+     ^
+In file included from test/s3utils_test.cpp:1:
+src/s3utils.cpp:88:5: warning: 'HMAC_Update' is deprecated: first deprecated in OS X 10.7 [-Wdeprecated-declarations]
+    HMAC_Update(&hmac, (unsigned char *)str, strlen(str));
+    ^
+/usr/include/openssl/hmac.h:99:6: note: 'HMAC_Update' has been explicitly marked deprecated here
+void HMAC_Update(HMAC_CTX *ctx, const unsigned char *data, size_t len) DEPRECATED_IN_MAC_OS_X_VERSION_10_7_AND_LATER;
+     ^
+In file included from test/s3utils_test.cpp:1:
+src/s3utils.cpp:89:5: warning: 'HMAC_Final' is deprecated: first deprecated in OS X 10.7 [-Wdeprecated-declarations]
+    HMAC_Final(&hmac, out_hash, &len);
+    ^
+```
+
+## Reason
+
+Apple is migrating from OpenSSL to Common Crypto. As a result the
+OpenSSL API is marked as "deprecated" from OS X 10.7.
+
+## Solution
+
+```
+    brew install openssl
+    brew link openssl --force
+```
+And include the ssh headers in compiling paths.
+
+-- soluction is given by Adam Lee <ali@pivotal.io>
