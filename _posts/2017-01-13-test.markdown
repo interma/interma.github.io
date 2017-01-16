@@ -1,3 +1,10 @@
+---
+layout: post
+title:  "test"
+subtitle:  "测试"
+date:   2017-01-16
+---
+
 ## test
 
 * first
