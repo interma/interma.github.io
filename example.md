@@ -8,5 +8,5 @@ permalink: /example/
 
 ![image]({{ site.url }}/assets/images/hawq.png)
 
-download:{{ site.url }}/download/fntdb07-architecture.pdf
+download: [paper]({{ site.url }}/download/fntdb07-architecture.pdf)
 

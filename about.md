@@ -16,7 +16,7 @@ A brief way to achieve it:
 
 You can find out more info about the developing of HAWQ at
 
-* [Home] (http://hawq.incubator.apache.org/)
-* [Code] (https://github.com/apache/incubator-hawq)
+* [Home](http://hawq.incubator.apache.org/)
+* [Code](https://github.com/apache/incubator-hawq)
 
 
