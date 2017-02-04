@@ -22,8 +22,8 @@ permalink: /example/
 1. ordered item1 
 2. ordered item2
 
-[ ] todolist1
-[X] todolist2
+* [ ] todolist1
+* [X] todolist2
 
 ## code
 
