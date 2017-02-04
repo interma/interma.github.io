@@ -4,13 +4,14 @@ title: Example
 permalink: /example/
 ---
 
-# This is a md example
+# This is a brief md introduction
 
 ## font
 
 **bold**
 *italic*
 ~~strike~~
+
 > qoute text
 
 ## list and todo
@@ -21,8 +22,8 @@ permalink: /example/
 1. ordered item1 
 2. ordered item2
 
-- [ ] todolist1
-- [X] todolist2
+[ ] todolist1
+[X] todolist2
 
 ## code
 
@@ -40,6 +41,7 @@ if __name__ == '__main__':
 | ------ | ------  | ------ |
 | 123 | 345 | 456 |
 | 678 | text | null |
+
 
 ## link, image and download
 
