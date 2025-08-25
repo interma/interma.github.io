@@ -1,35 +1,59 @@
-<!-- _includes/translate.html -->
-<button id="translate-btn">🌐 Translate it</button>
+<!-- One-click Google Translate to English -->
+<button id="translate-btn">🌐 English</button>
 
-<div id="microsoft_translate_container" style="display:none;"></div>
+<!-- hidden element for Google Translate -->
+<div id="google_translate_element" style="display:none;"></div>
 
-<script>
-document.getElementById("translate-btn").addEventListener("click", function() {
-  // 防止重复加载
-  if (window.microsoftTranslateLoaded) {
-    Microsoft.Translator.Widget.Toggle(); 
-    return;
-  }
-  window.microsoftTranslateLoaded = true;
-
-  var userLang = navigator.language || navigator.userLanguage || "en";
-
-  var s = document.createElement("script");
-  s.type = "text/javascript";
-  s.charset = "UTF-8";
-  s.src = "//www.microsoftTranslator.com/Ajax/V3/WidgetV3.js";
-  s.onload = function() {
-    Microsoft.Translator.Widget.Translate(
-      "zh-CHS", // 源语言：简体中文
-      userLang, // 目标语言：用户浏览器语言
+<script type="text/javascript">
+  function googleTranslateElementInit() {
+    new google.translate.TranslateElement(
       {
-        layout: Microsoft.Translator.Widget.Layout.Simple,
-        oncomplete: function() {
-          console.log("Translation complete");
-        }
-      }
+        pageLanguage: 'zh-CN',
+        includedLanguages: 'en',
+        autoDisplay: false
+      },
+      'google_translate_element'
     );
-  };
-  document.body.appendChild(s);
-});
+
+    // 强制切换到英文
+    setTimeout(function() {
+      var select = document.querySelector(".goog-te-combo");
+      if (select) {
+        select.value = "en";
+        select.dispatchEvent(new Event("change"));
+      }
+    }, 500);
+  }
+
+  document.getElementById("translate-btn").addEventListener("click", function() {
+    if (window.googleTranslateLoaded) {
+      // 已加载过 → 再点按钮强制切到英文
+      var select = document.querySelector(".goog-te-combo");
+      if (select) {
+        select.value = "en";
+        select.dispatchEvent(new Event("change"));
+      }
+      return;
+    }
+    window.googleTranslateLoaded = true;
+
+    var s = document.createElement("script");
+    s.type = "text/javascript";
+    s.src = "//translate.google.com/translate_a/element.js?cb=googleTranslateElementInit";
+    document.body.appendChild(s);
+  });
 </script>
+
+<style>
+#translate-btn {
+  padding: 6px 12px;
+  font-size: 14px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  cursor: pointer;
+  background: #fff;
+}
+#translate-btn:hover {
+  background: #f0f0f0;
+}
+</style>
