@@ -1,10 +1,4 @@
----
-layout: page
-title: Example
-permalink: /example/
----
-
-# This is a brief md introduction
+This is a brief md introduction
 
 ## font
 

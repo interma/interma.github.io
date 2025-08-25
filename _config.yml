@@ -28,7 +28,7 @@ description: >- # this means to ignore newlines until "baseurl:"
   interma notes
 baseurl: "" # the subpath of your site, e.g. /blog
 url: "http://interma.github.io" # the base hostname & protocol for your site
-twitter_username: jekyllrb
+# twitter_username: jekyllrb
 github_username:  interma
 
 # Build settings
