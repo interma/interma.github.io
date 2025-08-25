@@ -1,0 +1,35 @@
+<!-- _includes/translate.html -->
+<button id="translate-btn">🌐 Translate it</button>
+
+<div id="microsoft_translate_container" style="display:none;"></div>
+
+<script>
+document.getElementById("translate-btn").addEventListener("click", function() {
+  // 防止重复加载
+  if (window.microsoftTranslateLoaded) {
+    Microsoft.Translator.Widget.Toggle(); 
+    return;
+  }
+  window.microsoftTranslateLoaded = true;
+
+  var userLang = navigator.language || navigator.userLanguage || "en";
+
+  var s = document.createElement("script");
+  s.type = "text/javascript";
+  s.charset = "UTF-8";
+  s.src = "//www.microsoftTranslator.com/Ajax/V3/WidgetV3.js";
+  s.onload = function() {
+    Microsoft.Translator.Widget.Translate(
+      "zh-CHS", // 源语言：简体中文
+      userLang, // 目标语言：用户浏览器语言
+      {
+        layout: Microsoft.Translator.Widget.Layout.Simple,
+        oncomplete: function() {
+          console.log("Translation complete");
+        }
+      }
+    );
+  };
+  document.body.appendChild(s);
+});
+</script>
