@@ -11,9 +11,9 @@ permalink: /about/
 | | | | | ||  __/ |  | | | | | | (_| |
 |_|_| |_|\__\___|_|  |_| |_| |_|\__,_|
 
-A casual and interesting developer
+{{ site.personalize }}
 --------------------------------
  ⚽ Loves Football 
- 📜 Enjoys History 
+ 📜 Enjoys History and 🎮 TVGame 
  💻 Coding with Fun 
 ```
