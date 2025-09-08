@@ -1,12 +1,13 @@
 ---
 layout: page
-title: Postgres
+title: PG文章
 permalink: /postgres/
+nav_order: 1
 ---
 
-## 我自己的一些关于Postgres/Greenplum的记录
+个人关于Postgres/Greenplum的一些记录
 
-## => Postgres基础
+## => Postgres点滴
 ### 参考书
 目前使用AI来解读pg代码已经非常强大了，除了代码之外，推荐的几本书籍：
 * Hironobu's [PG-JP book](https://www.interdb.jp/pg/)
@@ -18,8 +19,8 @@ permalink: /postgres/
 * SMGR
 * Bufferpool
 * 后台写进程
-* Heap
-* Index
+* Heap操作
+* 索引
 * Syscache/Relcache
 
 ### Xlog
