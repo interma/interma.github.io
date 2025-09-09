@@ -1,0 +1,8 @@
+---
+layout: post
+title:  "存储管理器SMGR"
+date:   2025-08-11 09:21:38 +0800
+permalink: /postgres/smgr.html
+tags: [postgres, storage]
+---
+(ing...)
