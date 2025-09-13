@@ -118,7 +118,7 @@ typedef HeapTupleData *HeapTuple;
 
 最后，再提一下压缩：直接加载在bufferpool中的页数据可能是压缩形式，那么heaptuple.t_data所指向的这个压缩数据是无法直接返回给用户的。会根据具体需要，择时进行**惰性解压缩**并转储到执行器内存（memorycontext）中，这个逻辑在```pg_detoast_datum_XXX()```中。
 
-### References and Questions
+### Discussion
 关于postgres存储的资料可以说非常多了，往往配合着MVCC和事务一起来介绍，推荐的几本书中都有详细全面的介绍。
 需要特别留意的是：
 1. 磁盘上是多版本数据在物理上混合存储，这带来了pg特有的一系列问题/特性

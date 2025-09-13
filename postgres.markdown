@@ -7,7 +7,10 @@ nav_order: 1
 
 个人关于Postgres/Greenplum的一些记录
 
-## Postgres点滴
+## Postgres实现简介
+以极简方式对pg内部的一些实现进行介绍。
+> 已经有那么多分析pg内部实现的资料了，为什么你还需要写一个？这里主要是我之前的学习记录，另外毕竟千人千面，可能我的介绍恰好对你有帮助
+
 ### 参考书
 目前使用AI来解读pg代码已经非常强大了，除了代码之外，推荐的几本书籍：
 * Hironobu's [PG-JP book](https://www.interdb.jp/pg/)
@@ -19,7 +22,7 @@ nav_order: 1
 * [SMGR]({% post_url 2025-09-09-smgr %})
 * Bufferpool
 * 后台写进程
-* Heap表操作
+* TableAM和Heap操作
 * 索引
 * Syscache/Relcache
 
@@ -38,11 +41,15 @@ nav_order: 1
 * Insert/Update
 * 常用算子
 
-### 其他
-* 扩展Postgres
-
 ## Greenplum思考
+开发gp的一些思考记录
 * 架构再思考
 * OLTP上的性能提升
 * 更好的列存实现
 * 执行器架构和Interconnect
+
+## 其他文章
+一些小型主题放到这里
+* 对postgres进行扩展
+* ✔[gp代码中的原子操作](https://blog.csdn.net/gp_community/article/details/124636303)（之前写给gp社区的）
+* ✔[gp中的快照](https://blog.csdn.net/chrisy521/article/details/122590844)（之前写给gp社区的）
