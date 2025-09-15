@@ -19,7 +19,7 @@ nav_order: 1
 
 ### 存储
 * ✔[存储文件和格式]({% post_url 2025-09-05-storage-format %})
-* [SMGR]({% post_url 2025-09-09-smgr %})
+* ✔[SMGR]({% post_url 2025-09-09-smgr %})
 * Bufferpool
 * 后台写进程
 * TableAM和Heap操作
