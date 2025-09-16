@@ -9,7 +9,7 @@ tags: [postgres, storage]
 - src/backend/storage/smgr/smgr.c
 - src/backend/storage/file/fd.c
 
-SMGR（Storage Manager）层负责为上层提供统一的**relation**磁盘存储接口；而FD（File Descriptor）层则封装了具体的文件打开、关闭、缓存与操作管理，直接和**OS系统调用**交互。
+SMGR层（Storage Manager）负责为上层提供了面向**relation**磁盘存储接口；而FD层（File Descriptor）则封装了具体的文件打开、关闭、缓存与操作管理，直接和**OS系统调用**交互。
 ```
 bufferpool──►[smgr]───┐                     
                       │                     
@@ -19,7 +19,7 @@ wal ──────────────────┘
 ```
 
 ### SMGR接口
-SMGR的接口见```smgrsw```，它是一个```f_smgr```结构（若干函数指针），目前pg代码内部只有md（magnetic disk，```src/backend/storage/smgr/md.c```）一个实现：
+SMGR的接口见```smgrsw```，它是一个```f_smgr```结构（若干函数指针），目前pg代码内部只有md（magnetic disk，```src/backend/storage/smgr/md.c```）这一个实现：
 ```c
 static const f_smgr smgrsw[] = {
 	/* magnetic disk */
@@ -34,7 +34,7 @@ static const f_smgr smgrsw[] = {
 	}
 };
 ```
-> 这些接口函数都非常好理解，功能如名。只是要留意它们的**操作对象**都是```SMgrRelation```：将"关系"对应的文件句柄纳入其内进行管理
+> 这些接口函数都非常好理解，功能如名。留意它们的**操作对象**都是```SMgrRelation```：将"关系"对应的文件句柄纳入其内进行管理
 
 以写操作为例：
 ```c
@@ -42,10 +42,10 @@ void smgrwrite(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum, char
     -> mdwrite(...);    //函数签名和smgrwrite一致
         -> FileWrite(v->mdfd_vfd, buffer, BLCKSZ, ...);
 ```
-其功能非常直接：将buffer中的数据写入到reln的第forknum个fork的第blocknum个块中。其内部实现则是逐层转发至FD层的```FileWrite()```，然后它再和OS通过syscall进行交互，完成数据的写入。
+其功能非常直接：将buffer中的数据写入到reln的第forknum个文件的第blocknum个块中。内部实现通过转发请求至FD层的```FileWrite()```，然后它再和OS通过syscall进行交互，完成数据的最终写入。
 
 ### FD接口
-FD层的更准确名称是VFD（virtual file descriptor），这是pg自己实现的一个系统文件描述符缓存。通过VFD机制来灵活地管理和复用有限的描述符，确保不会因描述符耗尽而导致异常。这些被管理的文件描述符都在```SMgrRelation```结构中。
+FD层的更准确名称是VFD（virtual file descriptor），pg自己实现了的一个文件描述符缓存：通过VFD机制来灵活地管理和复用有限的文件描述符。这些被管理的文件描述符都封装在```SMgrRelation```结构中。
 
 同样以写操作为例：
 ```c
@@ -55,14 +55,14 @@ int FileWrite(File file, char *buffer, int amount, off_t offset, uint32 wait_eve
 ```
 将buffer中的内容通过`pwrite()`系统调用写入到文件的相应偏移上。
 
-如下是FD层几个常用函数和系统调用的关系：
+如下是FD层几个常用函数和系统调用的对应关系：
 ```
 PathNameOpenFile() → open()
 FileRead()         → pread()
 FileWrite()        → pwrite()
 FileSync()         → fsync()
 ```
-> 系统调用通常事是以glibc函数的形式提供给上层应用来调用，因此在名称上可能有一些差异。比如64位系统中就是```pwrite64()```，一但发现gdb b不住时，可以检查一下是不是名称的问题
+> 系统调用通常是以glibc函数的形式提供给上层应用来调用，因此在名称上可能有一些差异。比如64位系统中就是```pwrite64()```，一但发现gdb b不住时，可以检查一下是不是名称的问题
 
 ### 调用栈示例
 通过下边2个例子看一下整体的调用栈轨迹：
@@ -79,7 +79,7 @@ FileSync()         → fsync()
 #13 ExecSeqScan (pstate=<optimized out>) at nodeSeqscan.c:112
 ```
 在脉络上非常清晰：
-```Scan(Executor) → heap(tableAM) → readbuffer(bufferpool) → mdread(SMGR)→ FileRead(FD) → pread(syscall)```
+```Scan(Executor) → heap(tableAM) → readbuffer(bufferpool) → smgrread(SMGR)→ FileRead(FD) → pread(syscall)```
 
 ★写操作insert
 ```gdb
@@ -94,26 +94,25 @@ FileSync()         → fsync()
 #11 ExecInsert (mtstate=mtstate@entry=0xab1ec04e57a8, resultRelInfo=resultRelInfo@entry=0xab1ec04e59c0, slot=0xab1ec04e5028, planSlot=planSlot@entry=0xab1ec04e6b60, estate=estate@entry=0xab1ec04e5530, canSetTag=<optimized out>) at nodeModifyTable.c:1031
 #12 ExecModifyTable (pstate=0xab1ec04e57a8) at nodeModifyTable.c:2719
 ```
-脉络同read，但是需要留意：insert只触发了**同步**的extend操作（新增一个block到文件），而具体要写入的数据需要等待bgwriter/checkpointer来**异步**进行写入并刷入磁盘
+脉络同read，但是需要留意：insert只触发了**同步**的extend操作（新增一个block到文件），而具体的数据需要等待bgwriter/checkpointer来**异步**进行写入并刷入磁盘
 
 ### Discussion
-pg的SMGR和FD层非常朴实，在pg17之前（似乎）未使用到OS提供高级IO特效，所以这块显然有很大的改进空间:
-- pg17中引入了vectored I/O：一次系统调用中完成多个IO请求
-- pg18中引入了AIO和DIO：
-[The path to using AIO in postgres (PGConf.EU 2023)](https://www.youtube.com/watch?v=qX50xrHwQa4)
-    > For a few years we (Andres Freund, Thomas Munro, Melanie Plageman, David Rowley) have been working towards using asynchronous IO (AIO) and direct IO in Postgres. The goal of using AIO and DIO in postgres is to improve throughput, decrease latency, reduce jitter, reduce double buffering and more.
+pg的SMGR和FD层非常朴实，在pg17之前基本未使用到OS提供的高级IO特性，所以这里显然有很大的改进空间:
+- pg17中引入了vectored I/O：在一次系统调用中完成多个IO请求
+- pg18中引入了AIO和DIO：进一步加强性能
+    - [The path to using AIO in postgres (PGConf.EU 2023)](https://www.youtube.com/watch?v=qX50xrHwQa4)
+        > For a few years we (Andres Freund, Thomas Munro, Melanie Plageman, David Rowley) have been working towards using asynchronous IO (AIO) and direct IO in Postgres. The goal of using AIO and DIO in postgres is to improve throughput, decrease latency, reduce jitter, reduce double buffering and more.
+    - 目前的主要使用场景还是**数据预读（prefetch）**，社区正在持续优化中，可以多关注。
 
-目前的主要使用场景还是**数据预读（prefetch）**，社区中正在持续优化中，可以关注。
-
-另外SMGR层是可以支持hook的，比如[NeonDB](https://github.com/neondatabase/neon/blob/77e22e4bf09d88b70b4a83a38c2f6de6301816b4/pgxn/neon/pagestore_smgr.c#L2220-L2255)：
+另外SMGR层是支持通过扩展hook的，一旦需要改变最终的读写行为时就可以这里搞，比如[NeonDB](https://github.com/neondatabase/neon/blob/77e22e4bf09d88b70b4a83a38c2f6de6301816b4/pgxn/neon/pagestore_smgr.c#L2220-L2255)：
 ```cpp
 static const struct f_smgr neon_smgr =
 {
 ...
 #if PG_MAJORVERSION_NUM >= 17
 	.smgr_prefetch = neon_prefetch,
-	.smgr_readv = neon_readv,
-	.smgr_writev = neon_writev,
+	.smgr_readv = neon_readv,   // 先读本地缓存，未命中再去拉取存储服务
+	.smgr_writev = neon_writev, // 不写本地数据
 #else
 	.smgr_prefetch = neon_prefetch,
 	.smgr_read = neon_read,
@@ -123,7 +122,7 @@ static const struct f_smgr neon_smgr =
 ```
 
 Questions:
-1. 之前提到了bufferpool中的数据写盘是异步的，具体有那几种场景？
-    > gdb b一下看看
+1. 之前提到了bufferpool中的数据写盘是异步的，具体再分那几种场景？
+    > 提示：比如数据页换出，可以通过gdb来看看
 1. mysql innodb也有bufferpool，它推荐使用的内存越大越好，那么pg也是这样的吗？
     > 如果2者有差异，造成这种区别的原因是什么？
