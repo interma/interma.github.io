@@ -18,3 +18,7 @@ nav_order: 10
  📜 Enjoys History and 🎮 TVGame 
  💻 Coding with Fun 
 ```
+
+Links:
+- https://github.com/interma
+- https://www.zhihu.com/people/interma

@@ -36,17 +36,18 @@ nav_order: 1
 ### 优化器
 
 ### 执行器
-* 执行器基础
+* [执行器基础]({% post_url 2025-09-16-executor-common %})
 * Scan家族
 * Insert/Update
 * 常用算子
 
 ## Greenplum思考
-开发gp的一些思考记录
+gp开发中的一些思考记录
 * 架构再思考
 * OLTP上的性能提升
 * 更好的列存实现
-* 执行器架构和Interconnect
+* 执行器架构和interconnect
+* 更少bug
 
 ## 其他文章
 一些小型主题放到这里
