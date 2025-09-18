@@ -15,7 +15,7 @@ nav_order: 10
 {{ site.personalize }}
 --------------------------------
  ⚽ Loves Football 
- 📜 Enjoys History and 🎮 TVGame 
+ 📜 Enjoys History and 🎮 VideoGame 
  💻 Coding with Fun 
 ```
 
