@@ -6,8 +6,8 @@ permalink: /postgres/executor.html
 tags: [postgres, executor]
 ---
 简要介绍一下postgres中执行器的整体架构（并不包括具体的算子实现）。
-
-对典型算子（如sort，agg，join等）的实现介绍会单独起一篇文章，另外执行器中的主要基础设施（如memory context，hash table，resource owner等）也会后续单独起一篇来介绍。
+- 对典型算子（如sort，agg，join等）的实现介绍会单独起一篇文章
+- 另外执行器中的主要基础设施（如memory context，hash table，resource owner等）也会后续单独起一篇来介绍。
 
 ### 基础
 查询执行器负责执行传入的查询计划（plantree），然后返回结果给用户端，其位于query流程的最后一步：
@@ -146,6 +146,8 @@ ChatGPT画的递归调用图
 
 ### TupleTableSlot
 (todo)
+
+核心在于多种tuple类型适配和**惰性**构造。
 ```
  * 1. physical tuple in a disk buffer page (TTSOpsBufferHeapTuple)
  * 2. physical tuple constructed in palloc'ed memory (TTSOpsHeapTuple)
@@ -154,24 +156,26 @@ ChatGPT画的递归调用图
 ```
 
 ### Discussion
-对于执行器来说，需要做到的是"准确高效"。准确是最基本要求，因此对它的挑战主要在如何高效执行上（特别是对于olap场景）。
+对于执行器来说，需要做到的是"准确高效"。准确是最基本要求，因此挑战主要在如何更高效执行上（特别是对于olap场景）。
 
-而目前pg的火山模型执行器来自于**远古时代**（当时磁盘IO是主要开销，同时cpu并发能力也不强）。而对于现代计算机系统架构，它已经逐步成为了性能瓶颈。
+而目前pg的火山模型执行器起源于磁盘IO为主要瓶颈的**远古时代**（同事当时cpu并发能力也不强）。而对于现代计算机系统架构，它已经逐步成为了主要的性能瓶颈。
 
-目前采用的主要优化手段包括：
+目前主要优化手段包括：
 - 宏观架构 → 更好的并行
-    - 并行执行：如pg已经实现了的parallel worker（算子内），gp的多节点mpp执行等
-    - push-based pipeline执行器：以批量数据为操作对象，让数据流以从下至上（而不是火山模型的由上至下）方式来执行
-- 指令集优化 → 更精简的cpu-cycle
-    - 向量化执行：算子之间采用batch结构，传输一批数据（而不是一个tuple），减少函数调用开销
-    - SIMD/JIT优化：生成更高效的cpu指令。pg已经针对表达式计算引入了llvm进行jit优化
+    - 并行执行：如：pg已经实现的parallel worker（算子内并行）；gp的多节点mpp执行等等
+    - pipeline执行器：以批量数据为操作对象，数据流由下至上（火山模型是由上至下）以push-based方式来执行
+- 指令优化 → 更精简高效的cpu-cycle
+    - 向量化执行：算子之间采用batch结构来传输一批数据（而不是一个tuple），减少函数调用开销
+    - SIMD/JIT：使用/生成更高效的cpu指令。目前pg已经针对表达式计算使用llvm来进行JIT优化
 - 通用算法
     - 一些通用的微优化，如：延迟物化，多阶段agg，shareinputscan，runtime filter等等
 
-具体实现时，往往需要组合使用如上的多种优化手段，并在存储层上搭配合适的列存实现（更好的节约IO）。
+在具体工程实现上，需要组合使用如上的多种优化手段，并在存储层上搭配合适的列存实现（从而更好的节约磁盘IO）。
 
-可以参考的一些开源项目：
-- duckdb，实现了push-based pipeline执行器
-    - pg_duckdb，更直接的将执行器直接搬到了pg heap行存上
-- doris，整合了如上多种优化手段，（据说）是集大成者
-- [hydra-columnar](https://github.com/hydradatabase/columnar)：pg的一个列存实现（entension方式），其中的执行器部分实现了query并行和向量化
+对于pg而言，受限于工程开销，目前倾向于选择复用已有基础设施（如llvm）且对架构侵入不大的方向来做（个人观点）。而在其他开源数据系统中（以impala和clickhouse作为先行者）在这方面做了大量的优化相关工作，可以参考的一些开源项目：
+- duckdb，实现了非常简洁的push-based pipeline执行器
+    - pg_duckdb，更直接的将这个执行器直接搬到了pg的heap行存上
+- doris，整合了目前已知的大量优化手段，（据说）是列存计算的集大成者
+- [hydra-columnar](https://github.com/hydradatabase/columnar)：pg的一个列存实现（entension方式），其中的执行器部分实现了query并行和向量化，适合作为学习入门
+
+paper则可以参考慕尼黑（TUM）和阿姆斯特丹（CWI）大学的一系列相关论文。

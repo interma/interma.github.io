@@ -35,7 +35,7 @@ nav_order: 1
 ### 优化器
 
 ### 执行器
-* [执行器基础]({% post_url 2025-09-16-executor-common %})
+* ✔[执行器基础]({% post_url 2025-09-16-executor-common %})
 * Scan家族
 * Insert/Update
 * 常用算子
