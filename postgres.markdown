@@ -7,14 +7,14 @@ nav_order: 1
 个人关于Postgres/Greenplum的一些记录
 
 ## Postgres内部实现简介
-以极简方式对pg内部的一些实现进行介绍。
+以极简方式对pg的一些内部实现进行介绍。
 > 目前已经有很多分析pg内部实现的资料了，为什么你又要写？算是我之前的学习备忘吧，另外毕竟千人千面，可能这里的介绍恰好对你有帮助
 
 ### 参考书
 目前使用AI来解读pg代码已经非常强大了，除了代码之外，推荐的几本书籍：
 * Hironobu's [PG-JP book](https://www.interdb.jp/pg/)
 * Egor's [PG14 book](https://postgrespro.com/community/books/internals)
-* 树杰著的2本技术内幕：事务处理和查询优化
+* 树杰著的2本postgres技术内幕：事务处理和查询优化
 
 ### 存储
 * ✔[存储文件和格式]({% post_url 2025-09-05-storage-format %})
@@ -26,22 +26,27 @@ nav_order: 1
 * 系统表和syscache/relcache
 
 ### Xlog
+* xlog基础
+* 作为复制流的xlog
 
 ### 锁
+* 常规锁与LW锁
+* 行锁
 
 ### 事务
 * MVCC和快照
 
 ### 优化器
+* 一些资料汇总（个人不是很懂优化器）
 
 ### 执行器
 * ✔[执行器基础]({% post_url 2025-09-16-executor-common %})
 * Scan家族
-* Insert/Update
 * 常用算子
+* 写操作Insert/Update
 
 ### 其他
-* 对postgres进行扩展
+* 对pg进行扩展
 
 ## Greenplum相关
 ### 基础
@@ -56,6 +61,7 @@ nav_order: 1
 * 执行器架构和interconnect
 
 ### 其他
-一些小型主题
-* ✔[gp代码中的原子操作](https://blog.csdn.net/gp_community/article/details/124636303)（之前写给gp社区的）
-* ✔[gp中的快照](https://blog.csdn.net/chrisy521/article/details/122590844)（之前写给gp社区的）
+之前写给GP社区的几篇文章（与PG实现基本一致）
+* [gp代码中的原子操作](https://blog.csdn.net/gp_community/article/details/124636303)
+* [gp中的快照](https://blog.csdn.net/chrisy521/article/details/122590844)
+* [gp中的复合索引](https://juejin.cn/post/6876618512350216205)
