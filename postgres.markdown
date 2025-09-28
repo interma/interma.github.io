@@ -22,8 +22,8 @@ nav_order: 1
 * Bufferpool
 * 后台写进程
 * TableAM和Heap操作
-* 索引
-* Syscache/Relcache
+* [Btree索引]({% post_url 2025-09-28-btree %})
+* 系统表和syscache/relcache
 
 ### Xlog
 
