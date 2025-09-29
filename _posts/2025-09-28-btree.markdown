@@ -1,8 +1,48 @@
 ---
 layout: post
 title:  "Btree索引"
-date:   2025-08-16 09:02:11 +0800
+date:   2025-08-22 13:42:55 +0800
 permalink: /postgres/btree.html
 tags: [postgres, index]
 ---
-(ing)
+### 基础
+为了加快点查速度，需要在数据库中引入索引（特别是OLTP场景）。索引的最基础的实现有2种：Hash和Tree。PG诞生于内存不足，且磁盘IO为主要瓶颈的时代，因此面向磁盘优化的BTree就是当仁不让的选择。
+
+```txt
+              [ Root ]
+                 |
+        +--------+--------+             root is in memory
+        |                 |             
+   [ Internal ]      [ Internal ]       read each [node] from disk
+        |                 |
+   +----+----+        +----+----+       until leaf    
+   |         |        |         |
+ [Leaf]<->[Leaf] <-> [Leaf]<->[Leaf]
+```
+
+其内部实现参看[GP中的BTree实现](https://juejin.cn/post/6857314191876259853)，这我之前为GP社区写的一篇详细介绍，其实现和pg9.6完全一致。
+
+再补充记录一些要点：
+- 通过opclass/opfamily来支持多类型，有点类似C++中的traits
+- 与表数据一样，索引也需要WAL支持
+- 索引不区分MVCC多版本，因此这里存在一系列优化，比如HOT
+- 索引操作需要考虑（高性能的）并发控制：blink树，postgres中的[实现参考](https://zhuanlan.zhihu.com/p/712781394)
+- 如何删除索引键以及何时释放空间，也参考如上的link
+
+在pg最近的几个大版本（12~18）中对btree进行了许多改进，但是结构和操作上没有大的变化，包括了：
+- 优化性能/空间：并行索引创建(CIC)，索引键deduplication，bottom-up删除，异步IO支持等等
+- 优化器适配：支持更多的query场景，比如in(...)
+- 运维：监控索引创建进度，更多的explain项等
+
+### Discussion
+Btree索引主要服务于oltp场景，而对于olap场景更多的是采用bitmap（GP独有的），brin等索引。
+
+对比与pg的heap+btree，常见的数据组织形式还有LSM方式。《DDIA》中有一节对它们进行了比较：主要关注读写放大上的差异。
+
+另外如果是全内存数据库（索引也全部加载在内存中），那么可以考虑其他更高效的索引，比如Hash索引，Trie树索引（ART in DuckDB）。
+
+对于Btree的现代改进，可以参考sigmod25的最新论文《B-Trees Are Back》以及其参考文献，[论文解读](https://zhuanlan.zhihu.com/p/1948838661211809288)。
+
+Questions:
+1. postgres中的CREATE INDEX CONCURRENTLY (CIC)并不阻塞读写操作，那么它是如何实现的？
+    > 提示：实际上存在短暂阻塞操作

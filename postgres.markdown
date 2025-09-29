@@ -22,7 +22,7 @@ nav_order: 1
 * Bufferpool
 * 后台写进程
 * TableAM和Heap操作
-* [Btree索引]({% post_url 2025-09-28-btree %})
+* ✔[Btree索引]({% post_url 2025-09-28-btree %})
 * 系统表和syscache/relcache
 
 ### Xlog
@@ -37,7 +37,7 @@ nav_order: 1
 * MVCC和快照
 
 ### 优化器
-* 一些资料汇总（个人不是很懂优化器）
+* 资料汇总
 
 ### 执行器
 * ✔[执行器基础]({% post_url 2025-09-16-executor-common %})
