@@ -14,7 +14,7 @@ nav_order: 1
 目前使用AI来解读pg代码已经非常强大了，除了代码之外，推荐的几本书籍：
 * Hironobu's [PG-JP book](https://www.interdb.jp/pg/)
 * Egor's [PG14 book](https://postgrespro.com/community/books/internals)
-* 树杰著的2本postgres技术内幕：事务处理和查询优化
+* 树杰著的2本postgres技术内幕：[事务处理](https://book.douban.com/subject/35543446/)和[查询优化](https://book.douban.com/subject/30256561/)
 
 ### 存储
 * ✔[存储文件和格式]({% post_url 2025-09-05-storage-format %})
@@ -37,7 +37,7 @@ nav_order: 1
 * MVCC和快照
 
 ### 优化器
-* 资料汇总
+* [优化器基础和资料汇总]({% post_url 2025-10-01-planner %})
 
 ### 执行器
 * ✔[执行器基础]({% post_url 2025-09-16-executor-common %})
