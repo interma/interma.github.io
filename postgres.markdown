@@ -37,7 +37,7 @@ nav_order: 1
 * MVCC和快照
 
 ### 优化器
-* [优化器基础和资料汇总]({% post_url 2025-10-01-planner %})
+* ✔[优化器基础和资料汇总]({% post_url 2025-10-01-planner %})
 
 ### 执行器
 * ✔[执行器基础]({% post_url 2025-09-16-executor-common %})

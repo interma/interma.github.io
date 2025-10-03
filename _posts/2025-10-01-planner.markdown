@@ -5,5 +5,67 @@ date:   2025-08-28 10:17:03 +0800
 permalink: /postgres/planner.html
 tags: [postgres, planner]
 ---
+对于优化器，（由于一直有出色的队友）我一直没系统学习，**谈不上有太多经验**，这里只分享一些有价值的参考资料。
 
-(ing)
+### 优化器基础
+postgres的优化器思路源自古老的System R优化器，简单说就是：基于统计信息的代价模型(CBO)，对于join order则是由下至上进行DP编排。
+
+对于gp，则在是pg的单机计划之上来添加motion（exchange）节点将其改造为一个并行计划。除了pg的优化器之外，还可以选用著名的[orca优化器](https://github.com/greenplum-db/gpdb-archive/tree/main/src/backend/gporca)：它基于现代化的Volcano/Cascades模型，进行自顶向下规划。
+
+优化器的整体架构和背景知识，可以参考polardb的2篇文章：[<1>](https://zhuanlan.zhihu.com/p/336084031)，[<2>](https://zhuanlan.zhihu.com/p/370372242)
+
+### 深入代码
+代码细节可以参考树杰的[《postgres技术内幕之查询优化》](https://book.douban.com/subject/30256561/)
+
+★优化器代码执行的步骤简要概况如下：
+```
+standard_planner()      // 主入口
+    subquery_planner()  // 逻辑重写
+    ├─ 处理 CTE/MERGE/空FROM       
+    ├─ 提升 SubLinks/Subqueries
+    ├─ 统计 rtable 信息
+    ├─ 预处理 RowMark
+    ├─ 表达式预处理
+    ├─ HAVING转移到WHERE
+    ├─ OUTER JOIN简化
+    ├─ 删除无用 RTE_RESULT
+    └─ grouping_planner()   // plan主逻辑
+        query_planner()     
+        ├─ 处理 targetlist、jointree、placeholder
+        ├─ 生成 joinlist
+        ├─ 外连接和等价类处理
+        ├─ 计算 pathkeys
+        ├─ 处理 placeholder 依赖
+        ├─ 移除无用 join
+        ├─ 分发 placeholder
+        ├─ 构建 lateral 信息
+        ├─ 外键与 join 约束匹配
+        ├─ OR 条件处理
+        ├─ 扩展 appendrels
+        └─ make_one_rel(root, joinlist) // join规划和路径生成 => RelOptInfo
+    get_cheapest_fractional_path()  // 获取最优路径
+    (gp独有步骤：调用cdbparallelize()将plan并行化)
+    create_plan()   // 将path转换成plantree，封装成PlannedStmt返回给执行器
+```
+
+★函数栈调用示例（[图片来源](https://mp.weixin.qq.com/s/OwkhZKHnTj7Y7uWP2T31wA)）
+
+![image]({{ site.url }}/assets/images/planner-funcs.webp){: width="600px"}
+
+★主要结构体
+
+如Query, Path, RelOptInfo等等 (todo)
+
+### Discussion
+
+优化器主要需要解决2个问题（按我目前的肤浅理解）：
+- 选择率估计：基于[统计信息](https://zhuanlan.zhihu.com/p/165000083)，之前gp很多客户case都是由于统计信息不准确造成的
+- join order：目前的pg还是采用简单DP+遗传算法，而更现代的做法是[DPccp论文](https://www.vldb.org/conf/2006/p930-moerkotte.pdf)
+
+由于相关概念都比较抽象，想深入掌握优化器，**必须**结合具体的case，这里有几篇doris很好的优化经验：[<1>](https://mp.weixin.qq.com/s/YKhyUlakWIKdBigDe1jR-A)，[<2>](https://zhuanlan.zhihu.com/p/706527168)
+
+Questions:
+1. 多表join的结果估计：比如2个表join，如何估算结果的行数？
+    > 提示：必然要通过统计信息，具体需要那种？
+2. 代码练习，新增一个plan节点
+    > 可以考虑新增一个sql语法 + plan节点 + 执行器节点，走一遍query处理的全过程
