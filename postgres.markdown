@@ -31,7 +31,7 @@ nav_order: 1
 
 ### 锁
 * [常规锁]({% post_url 2025-10-09-relation_lock %})
-* Lw锁，行锁和其他
+* [Lw锁，行锁和其他]({% post_url 2025-10-10-other_lock %})
 
 ### 事务
 * MVCC和快照
