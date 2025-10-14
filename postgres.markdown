@@ -30,8 +30,8 @@ nav_order: 1
 * 作为复制流的xlog
 
 ### 锁
-* [常规锁]({% post_url 2025-10-09-relation_lock %})
-* [Lw锁，行锁和其他]({% post_url 2025-10-10-other_lock %})
+* ✔[常规锁]({% post_url 2025-10-09-relation_lock %})
+* [lw锁，行锁和其他]({% post_url 2025-10-10-other_lock %})
 
 ### 事务
 * MVCC和快照
@@ -56,7 +56,7 @@ nav_order: 1
 ### 思考
 自己gp开发中的一些思考：
 * 架构再思考
-* OLTP上的性能提升
+* gp在OLTP上的性能提升
 * 更好的列存实现
 * 执行器架构和interconnect
 
