@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "其他锁"
-date:   2025-09-05 13:24:12 +0800
+date:   2025-09-07 13:24:12 +0800
 permalink: /postgres/other_lock.html
 tags: [postgres, lock]
 ---
