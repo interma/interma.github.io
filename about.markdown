@@ -19,6 +19,4 @@ nav_order: 10
  💻 Coding with Fun 
 ```
 
-Links:
-- https://github.com/interma
-- https://www.zhihu.com/people/interma
+Links | [github](https://github.com/interma) | [zhihu](https://www.zhihu.com/people/interma) | [youtube](https://www.youtube.com/@user-interma/playlists)

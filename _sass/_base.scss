@@ -184,7 +184,28 @@ pre {
     }
 }
 
+/* 表格样式 */
+table {
+  border-collapse: collapse; /* 合并边框 */
+  width: 100%;
+  margin: 1em 0;
+  font-size: 0.95em;
+}
 
+th, td {
+  border: 1px solid #ccc; /* 边框 */
+  padding: 8px 12px;
+  text-align: left;
+}
+
+th {
+  background-color: #f2f2f2; /* 表头背景 */
+  font-weight: bold;
+}
+
+tr:nth-child(even) {
+  background-color: #fafafa; /* 斑马条纹 */
+}
 
 /**
  * Icons
