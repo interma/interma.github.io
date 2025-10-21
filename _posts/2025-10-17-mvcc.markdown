@@ -6,4 +6,82 @@ permalink: /postgres/mvcc.html
 tags: [postgres, transaction]
 ---
 
-(ing)
+postgres中的MVCC（多版本并发控制）和snapshot（快照）是一个老生常谈的主题了，资料很多，可以参考PG-JP book。它们与之前介绍的锁一起为事务提供了隔离性保证。
+
+简单说：MVCC将目标数据在时间上划分为多个版本，而快照决定了具体事务中应该观察到其中的哪个。如下图所示：
+```txt
+        ┌────────────────────────────── snapshot1
+        │                                                 
+        │                  ┌─────────── snapshot2
+        ▼                  ▼                              
+[---ver1---] [-ver2-] [----ver3----]    row versions
+```
+
+### MVCC
+MVCC主要为了解决读-写冲突，在实现上pg采用了：
+- 每次修改数据时，新增一个元组
+- 在元组头上的xmin/xmax字段中记录事务id，从而确定了它存在的时间段
+
+除了记录事务id之外，还可以采用时间戳的方式（如duckdb）来实现多版本。
+
+几种数据库系统中的实现如下：
+
+| 数据库 | 实现方式 | 注释 |
+|-----|-----|-----|
+| postgres | tuple：xmin/xmax，O->N拉链+全量多版本，快照：[min,max]+xip | xip是活跃事务列表；只需要递增的xid，不需要全局时间戳 |
+| mysql | 和pg实现类似，N->O拉链+undolog | 参考[InnoDB原理](https://zhuanlan.zhihu.com/p/365415843) |
+| duckdb | tuple：ctime，增量updateinfo，快照：stime | 引入了全局时间戳，因此不需要活跃列表，ctime<stime的数据不可见，[参考](https://tangdh.life/posts/database/duckdb-mvcc/) |
+
+pg的多版本实现上最大的特点是：**全量版本复制+带内存储**，这给它带来了一系列特性和困扰，后边discussion那块再说。
+
+### Snapshot
+对于多版本数据，需要再配合一个事务快照来确定应该看到那个版本，这是保证隔离性的天然实现，通过快照实现的隔离级别也叫快照隔离级别，一般等同于可重复读（RR）隔离级别。
+
+之前我写的一篇详细的介绍：[gp中的快照](https://blog.csdn.net/chrisy521/article/details/122590844)（含gp的分布式快照）。
+
+需要注意的是除了常规的mvcc快照之外，还有很多其他快照类型，详见`HeapTupleSatisfiesVisibility()`：
+
+```c
+bool HeapTupleSatisfiesVisibility(HeapTuple htup, Snapshot snapshot, Buffer buffer)
+{
+    switch (snapshot->snapshot_type)
+    {
+        case SNAPSHOT_MVCC:
+            return HeapTupleSatisfiesMVCC(htup, snapshot, buffer);
+        case SNAPSHOT_SELF:
+            return HeapTupleSatisfiesSelf(htup, snapshot, buffer);
+        case SNAPSHOT_ANY:
+            return HeapTupleSatisfiesAny(htup, snapshot, buffer);
+        case SNAPSHOT_TOAST:
+            return HeapTupleSatisfiesToast(htup, snapshot, buffer);
+        case SNAPSHOT_DIRTY:
+            return HeapTupleSatisfiesDirty(htup, snapshot, buffer);
+        case SNAPSHOT_HISTORIC_MVCC:
+            return HeapTupleSatisfiesHistoricMVCC(htup, snapshot, buffer);
+        case SNAPSHOT_NON_VACUUMABLE:
+            return HeapTupleSatisfiesNonVacuumable(htup, snapshot, buffer);
+    }
+...
+```
+
+在具体编码时，需要留意每类快照的应用场景。
+
+### Discussion
+前边提到了pg中的mvcc实现方式很特别，质疑pg性能的根源基本都来着于这里，相关讨论：
+- Andy's [The Part of PostgreSQL We Hate the Most](https://www.cs.cmu.edu/~pavlo/blog/2023/04/the-part-of-postgresql-we-hate-the-most.html)
+    > its MVCC implementation is the worst among the other widely used relational DBMSs
+- 字节's [那些我很希望 Postgres 有，但 MySQL 已经有的功能](https://mp.weixin.qq.com/s/YUeaQVBO7Hl61IN6iLtY6g)
+    > Postgres 基于堆的存储结构和元组版本的 MVCC 机制在写密集场景中会产生更多开销（写放大）。虽然 Postgres 通过 HOT 更新等特性有所改进，但在重写负载下仍会产生更多 WAL 流量，并需要更频繁的 VACUUM 操作。MySQL 则采用聚簇索引存储和撤销日志，这在写重负载下性能更好
+
+这里再简单提一下pg中的事务实现，事务需要保证ACID，C是业务上天然考虑的，数据库系统实现上只需要考虑AID：
+- A原子性，通过引入事务标识和状态来保证
+- I隔离性，如前所述，MVCC+快照+锁保证
+- D持久性，通过xlog来保证
+
+另外pg也是支持二阶段事务（2PC）的，gp的分布式事务就是自行实现了协调者逻辑后，直接复用pg的参与者逻辑来实现的。
+
+Questions:
+1. pg中游标和DDL操作的隔离性有些特殊，具体特殊在？
+    > 看一下它们的快照
+1. pg如何做高效的online ddl变更？
+    > 开放性问题，目前也没有特别理想的方案
