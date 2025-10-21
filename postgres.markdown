@@ -34,7 +34,7 @@ nav_order: 1
 * ✔[lw锁，行锁和其他]({% post_url 2025-10-10-other_lock %})
 
 ### 事务
-* [MVCC和快照]({% post_url 2025-10-17-mvcc %})
+* ✔[MVCC和快照]({% post_url 2025-10-17-mvcc %})
 
 ### 优化器
 * ✔[优化器基础和资料汇总]({% post_url 2025-10-01-planner %})
