@@ -1,0 +1,169 @@
+---
+layout: post
+title:  "Scan家族"
+date:   2025-09-21 09:04:39 +0800
+permalink: /postgres/scan.html
+tags: [postgres, executor]
+---
+
+Scan算子实现了表上的各种扫描操作，它是了解pg执行器算子的入门好例子。
+
+### seq scan
+seq scan即顺序扫描，是scan中最简单的一种类型。
+
+它的典型栈轨迹
+```gdb
+#0  heap_getnextslot (sscan=0xb3f12c32cc40, direction=ForwardScanDirection, slot=0xb3f12c32c5c0) at heapam.c:1389
+#1  table_scan_getnextslot (sscan=0xb3f12c32cc40, direction=ForwardScanDirection, slot=0xb3f12c32c5c0) at ../../../src/include/access/tableam.h:889
+#2  SeqNext (node=0xb3f12c32c3d0) at nodeSeqscan.c:80
+#4  ExecScan (node=0xb3f12c32c3d0, accessMtd=0xb3f118942c74 <SeqNext>, recheckMtd=0xb3f118942d24 <SeqRecheck>) at execScan.c:183
+#5  ExecSeqScan (pstate=0xb3f12c32c3d0) at nodeSeqscan.c:112
+#6  ExecProcNode (node=0xb3f12c32c3d0) at ../../../src/include/executor/executor.h:242
+// ... 执行器栈轨迹
+```
+
+几个要点：
+
+- #6以下是执行器的通用栈轨迹（见之前[执行器]({% post_url 2025-09-16-executor-common %})的介绍）。
+- `ExecScan()`是实现各类scan（包括随后要介绍index scan，bitmap scan等）的通用模板，区别只是传入的access和recheck回调函数的不同，简化实现如下：
+```c
+TupleTableSlot *ExecScan(ScanState *node, ExecScanAccessMtd accessMtd, ExecScanRecheckMtd recheckMtd) {
+    ...
+
+    if (!qual && !projInfo)
+		// return tuple directly if no qualification and projection
+		return ExecScanFetch(node, accessMtd, recheckMtd);
+
+    for (;;) {
+        // do EvalPlanQual recheck and return (*accessMtd) (node)
+        slot = ExecScanFetch(node, accessMtd, recheckMtd);
+
+        // no more results
+        if (TupIsNull(slot)) return slot;
+
+        // check tuple satisfies the qual-clause
+        if (qual == NULL || ExecQual(qual, econtext))
+            // Found a satisfactory scan tuple
+            if (projInfo)
+                // do projection and return
+                return ExecProject(projInfo);
+            else
+                // Here, we aren't projecting, so just return scan tuple
+                return slot;
+    }
+    ...
+}
+```
+- `ScanState`中记录了Scan的执行器状态：根据不同的Scan类型再细分子类型，比如SeqScanState，IndexScanState
+- `EvalPlanQual()`是为RC隔离级别下的update/delete进行tuple再检查，需要调用具体传入的recheck回调函数
+- Projection和Qualification操作：前者即投影select col；后者即where条件；在pg中它们都是通过表达式计算来实现的
+- 最后通过调用heapAM接口中的getnext函数来获取实际的tuple
+
+### 其他scan
+
+★index scan
+
+当表字段上具有索引时，对于类似点查这种选择率低的sql，一般会选用index scan。
+
+以btree索引为例的栈轨迹
+```gdb
+#0  _bt_first (scan=0xb2db99ca6ed0, dir=ForwardScanDirection) at nbtsearch.c:748
+#1  btgettuple (scan=0xb2db99ca6ed0, dir=ForwardScanDirection) at nbtree.c:247
+#2  index_getnext_tid (scan=0xb2db99ca6ed0, direction=ForwardScanDirection) at indexam.c:529
+#3  index_getnext_slot (scan=0xb2db99ca6ed0, direction=ForwardScanDirection,  lot=0xb2db99ca60b0) at indexam.c:621 // note: scan is IndexScanDesc
+#4  IndexNext (node=0xb2db99ca5dc0) at nodeIndexscan.c:133
+#5  ExecScanFetch (node=0xb2db99ca5dc0, accessMtd=0xb2db8b091cb0 <IndexNext>, recheckMtd=0xb2db8b092398 <IndexRecheck>) at execScan.c:133
+#6  ExecScan (node=0xb2db99ca5dc0, accessMtd=0xb2db8b091cb0 <IndexNext>, recheckMtd=0xb2db8b092398 <IndexRecheck>) at execScan.c:183
+```
+
+其实现依然是复用ExecScan模板：
+`ExecScan(&node->ss, (ExecScanAccessMtd) IndexNext, (ExecScanRecheckMtd) IndexRecheck)`，具体实现逻辑在`IndexNext()`中：
+```c
+ExecIndexScan -> ExecScan -> 
+    IndexNext(): 
+        index_beginscan(IndexScanDesc scan, ...) // call rel->rd_indam->ambeginscan()
+        (index_rescan if RuntimeKeysReady)
+        index_getnext_slot()
+            index_getnext_tid()		// call rd_indam->amgettuple
+            index_fetch_heap()		// call rd_tableam->index_fetch_tuple
+```
+
+其实现在`index_getnext_slot()`中，简单说就是先`index_getnext_tid()`调用btree的相关AM函数返回一个tid，然后在`index_fetch_heap()`中调用heapAM接口，通过这个tid获取对应tuple。
+
+另外如果索引中已包含所需的全部数据且visibility map判断heap页数据全部可见，还可能应用index only scan，这时索引数据相当于一个小型"列存"了。
+```c
+    if (scandesc->xs_itup) // itup是一个indextuple
+        StoreIndexTuple(node, slot, scandesc->xs_itup, scandesc->xs_itupdesc);
+```
+
+★bitmap scan
+
+应用场景介于seq scan和index scan之间：有索引但是选择率中等（例如范围查询），一般选用bitmap scan。它会将通过索引获取到tid列表先按页面号就行排序，然后保证每个页面只用一次IO加载到bufferpool中以供后续访问。
+
+具体行为上[参考这里](https://www.yugabyte.com/blog/bitmap-scans-on-distributed-postgresql/)，而实现依然是`ExecScan(&node->ss, (ExecScanAccessMtd) BitmapHeapNext, (ExecScanRecheckMtd) BitmapHeapRecheck)`，重点在于位图结构`TIDBitmap`的实现。
+> It's a bitmap data structures that are spiritually similar to Bitmapsets, but are specially adapted to store sets of tuple identifiers (TIDs), or ItemPointers.
+
+★custom scan
+
+名义上是scan，实际上是一个可扩展的通用节点，可以非常灵活的实现各类自定义节点操作（不限于scan，甚至写操作）。其内部实现上我尚未深入，需要结合具体使用case来看，可以参考[pg_mooncake](https://github.com/Mooncake-Labs/pg_mooncake)。
+
+### scan中几个特殊行为
+尽管scan的行为相对简单，但是由于它是最常用的代码路径，因此有很多细节优化。
+
+★buffer选择
+
+scan中是读取每个页面必须要通过buffer，是使用主bufferpool还是进程私有的ring buffer？策略细节见`GetAccessStrategy()`。
+
+这块放到后续写到heapAM或bufferpool时再细说。
+
+★同步扫描
+
+多个并发的seq scan可以共享扫描的起始位置和进度，避免重复读取相同的page，从而减少磁盘IO并提升性能。
+> 留意这里是提升的是OS的cache命中率，并不是pg本身的bufferpool等
+
+工作原理如下：
+1. 起始位置的选择：seq scan开始后，判断表足够大且启用了同步扫描，会从一个共享的起始位置（`rs_startblock`）开始扫描：这个位置由 `ss_get_location` 函数计算，通常是上一次扫描结束的位置。
+1. 扫描进度：在扫描过程中，会定期调用`ss_report_location()`将当前扫描的位置报告给shm中的全局状态：
+    ```c
+    /* Pointer to struct in shared memory */
+    static ss_scan_locations_t *scan_locations;
+    ```
+1. 扫描协作：多个并发扫描通过这个共享状态来协作，确保它们不会扫描重复的page。如果扫描到达表的末尾，查询折返到表的起始位置继续扫描。
+
+★并行执行
+
+postgres是进程服务模型，因此很长一段时间内单query无法从多核中受益。从pg9.6开始（似乎）引入了query的并发执行机制：基于DSM（dynamic shared memory，`src/backend/storage/ipc/dsm.c`）和多进程的parallel worker框架，从而起到加速CPU类型query的效果，简化架构如下：
+
+```txt
+              ┌───────┐                                 
+              │       ◄───a Worker1                             
+  Leader  c───►  DSM  │                                 
+              │       ◄───a Worker2                            
+              └───────┘                                 
+```
+
+一般执行步骤：
+1. Leader create位于共享内存中的DSM，并将任务切分规则（比如块范围）写入DSM中的结构中（如`ParallelBlockTableScanDescData`）
+1. Leader随后启动多个Worker，这些worker attach到DSM上
+1. Worker从DSM中拿对应的任务并进行处理，最后把部分结果写回DSM中
+1. Leader等待DSM中的完成标志，将这些部分结果合并成最终结果，最后释放DSM
+
+几种scan的切分方法（留意版本，可能会有细微的变化）：
+- parallel seqscan
+    - in pg12：每个worker一次只分配一个block
+    - in pg14：每个worker分配一段连续的block（chunk），这样OS可以预读加速
+- parallel indexscan：每个worker分配一段连续的index block，随后再访问对应的heap block
+- parallel bitmapscan：由Leader生成位图信息，其他Worker并行扫描表数据
+
+★写行为
+
+scan是一个读操作，但是在某些场景下会包含一些出乎意料的**写**行为，例如设置hint bits，page pruning等等，[参考](https://mp.weixin.qq.com/s/2Cn6TE8HiyTaLzi7eJb2Jw)。
+
+### Discussion
+scan作为postgres中最常用的执行器算子，细节优化点很多，需要结合代码多看看。
+
+Questions:
+1. scan中的rechecker函数和index/bitmap scan中的xs_recheck是一个东西吗？
+    > xs_recheck是lossy index相关
+1. ExecScan的返回一个输出slot，对于TTSBufferTuple，具体数据是什么时候物化到了`slot->tts_values`中的？
+    > 可以gdb watch看一下
