@@ -23,10 +23,10 @@ nav_order: 1
 * 后台写进程
 * TableAM和Heap操作
 * ✔[Btree索引]({% post_url 2025-09-28-btree %})
-* 系统表和syscache/relcache
+* 系统表和cache
 
 ### Xlog
-* xlog基础
+* [xlog基础]({% post_url 2025-10-29-xlog %})
 * 作为复制流的xlog
 
 ### 锁
