@@ -5,9 +5,17 @@ date:   2025-08-08 10:51:01 +0800
 permalink: /postgres/storage-format.html
 tags: [postgres, storage]
 ---
-简要介绍一下postgres数据从磁盘到内存的存储格式。
+
+一张数据表中有各种类型的字段，其中存储了定长，变长乃至超长的数据。这些数据是如何存储在postgres中并返回给用户使用的呢？
+
+这里简单介绍一下用户数据在pg中从磁盘到内存的存储格式，乃至到网络的传输方式：
+```
+ 磁盘 file    | 内存 share buffer | 网络 TCP  
+  HeapTuple  →    TupleSlot     →   libpq  
+```
 
 ### In Disk
+pg的数据以**无序**堆表（对比mysql innodb，它是索引组织表IOT）的形式存储在磁盘上的文件中，这些文件按段/页切分：
 ```
 main fork   {[page][page]...} {segment files} ...
                │                               
@@ -23,8 +31,8 @@ tuple       {[header][user-data]} ◄──────┘
 
 ★Page：即数据页，每个段文件内部以8KB大小再细切为多个page。以最常见的heap page为例，其内部结构为：```pageheader|linepointers->...<-tuples```。tuple代表了一行用户数据，由于tuple是变长的数据，因此引入了linepointer行指针（作为一个定长转变长的跳转结构）。于是将page变成了一个小黑盒，外部通过lp的下标来一一对应其内部的tuple。
 这种结构的学名似乎叫**slotted page**：
-```gdb
-ChatGPT画的page内部结构图
+```txt
+chatgpt画的page内部结构图
   ┌─────────────────────────────────────────────────────────────────────────┐
   │ PageHeader                                                              │
   │  pd_lsn | pd_checksum | pd_flags | pd_lower | pd_upper | pd_special ... │
@@ -64,16 +72,16 @@ ALTER TABLE t1 ALTER COLUMN data SET COMPRESSION lz4; -- pglz or lz4
 ```
 
 ### In Memory
+磁盘上的数据会以page为单位放到位于共享内存的bufferpool中，然后消费方（如执行器）会通过一些内存结构对它们进行包装使用：
 ```
 bufferpool      {[block1][block2]...}◄──────disk pages
                     ▲                                 
 tupleslot           │                                 
-  -heaptuple────────┘                                 
-  -tupledesc    
+  - heaptuple ──────┘                                 
+  - tupledesc    
 ---
 structure: Datum/HeapTuple/TupleTableSlot
 ```
-磁盘上的数据会以page为单位放到位于共享内存的bufferpool中，然后消费方（如执行器）会通过一些内存结构对它们进行使用，主要有如下几类：
 
 ★Datum：对列值的抽象，通过它来访问一个列值。一般大小为8Bytes，因此对于长数据，实际上它是一个指针。
 > A Datum contains either a value of a pass-by-value type or a pointer to a value of a pass-by-reference type.
@@ -118,11 +126,46 @@ typedef HeapTupleData *HeapTuple;
 
 最后，再提一下压缩：直接加载在bufferpool中的页数据可能是压缩形式，那么heaptuple.t_data所指向的这个压缩数据是无法直接返回给用户的。会根据具体需要，择时进行**惰性解压缩**并转储到执行器内存（memorycontext）中，这个逻辑在```pg_detoast_datum_XXX()```中。
 
+### In Network
+实际上不算是存储了，这里一起简单介绍一下。
+
+pg设计了构建于TCP之上的应用层libpq协议，通过它传输数据给客户端：
+1. 首先发送RowDescription信息（对应tupledesc），它描述了结果的字段情况，细节见函数`printtup_startup() → SendRowDescriptionMessage()`
+2. 然后逐行发送DataRow（对应tuple），libpq协议中有2种可选返回格式：text和binary（`pgresAttDesc.format`），默认是text型。细节见函数`printtup()`
+  > 比如float类型3.14：text模式下发送字符串"3.14"，binary模式下发送IEEE754的4bytes浮点数
+3. 客户端收到数据后再自行解析
+
+如下是RowDescription和DataRow协议包的简化：
+```c
+// message type 'T'
+RowDescription {
+    int ncolumns     // 字段数量
+    for i in 1..ncolumns {
+        string  field_name    // 列名
+        int     type_oid      // 类型oid
+        int     format        // 0=text,1=binary
+        ...
+    }
+}
+
+// message type 'D'
+DataRow {
+    int ncolumns  // 字段数量
+    for col in 1..ncolumns {
+        int   value_len        // 数据长度
+        byte[value_len] value  // 实际数据内容
+        ...
+    }
+}
+```
+
+libpq协议比较朴实简洁，后续会再单独开一篇文章介绍它。
+
 ### Discussion
-关于postgres存储的资料可以说非常多了，往往配合着MVCC和事务一起来介绍，推荐的几本书中都有详细全面的介绍。
+关于postgres存储的资料非常多，往往配合着事务来一起来介绍，之前推荐的几本书中都有详细全面的讲解。
 需要特别留意的是：
-1. 磁盘上是多版本数据在物理上混合存储，这带来了pg特有的一系列问题/特性
-1. 内存中是一个典型的行存系统（配合经典执行器结构），如何进行列存改造是一个大主题
+1. 磁盘上的多版本数据是"带内混合存储"的，这给pg带来了一系列特有的问题
+1. pg这套存储是一个典型的行存系统（配合经典执行器结构），对于AP业务如何进行列存化改造是一个大主题
 
 Questions:
 1. null值是如何存储的？

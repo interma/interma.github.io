@@ -17,17 +17,12 @@ nav_order: 1
 * 树杰著的二本PostgreSQL技术内幕：[《事务处理》](https://book.douban.com/subject/35543446/)和[《查询优化》](https://book.douban.com/subject/30256561/)
 
 ### 存储
-* ✔[存储文件和格式]({% post_url 2025-09-05-storage-format %})
+* ✔[存储格式]({% post_url 2025-09-05-storage-format %})〔v2〕
 * ✔[SMGR]({% post_url 2025-09-09-smgr %})
 * Bufferpool
 * 后台写进程
 * TableAM和Heap操作
 * ✔[Btree索引]({% post_url 2025-09-28-btree %})
-* 系统表和cache
-
-### Xlog
-* [xlog基础]({% post_url 2025-10-29-xlog %})
-* 作为复制流的xlog
 
 ### 锁
 * ✔[常规锁]({% post_url 2025-10-09-relation_lock %})
@@ -35,6 +30,7 @@ nav_order: 1
 
 ### 事务
 * ✔[MVCC和快照]({% post_url 2025-10-17-mvcc %})
+* [xlog基础]({% post_url 2025-10-29-xlog %})
 
 ### 优化器
 * ✔[优化器基础和资料汇总]({% post_url 2025-10-01-planner %})
@@ -46,6 +42,8 @@ nav_order: 1
 * 写操作Insert/Update
 
 ### 其他
+* 系统表和cache
+* libpq
 * 对pg进行扩展
 
 ## Greenplum相关
