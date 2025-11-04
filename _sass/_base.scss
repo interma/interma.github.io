@@ -223,3 +223,10 @@ tr:nth-child(even) {
         }
     }
 }
+
+hr {
+  border: none;
+  margin-top: 1em;
+  height: 1px;
+  background: linear-gradient(to right, transparent, #ccc, transparent);
+}

@@ -157,7 +157,6 @@
 }
 
 
-
 /**
  * Page content
  */
@@ -198,12 +197,12 @@
 }
 
 .post-title {
-    font-size: 42px;
+    font-size: 32px;
     letter-spacing: -1px;
     line-height: 1;
 
     @include media-query($on-laptop) {
-        font-size: 36px;
+        font-size: 30px;
     }
 }
 
@@ -211,15 +210,15 @@
     margin-bottom: $spacing-unit;
 
     h2 {
-        font-size: 32px;
+        font-size: 28px;
 
         @include media-query($on-laptop) {
-            font-size: 28px;
+            font-size: 26px;
         }
     }
 
     h3 {
-        font-size: 26px;
+        font-size: 24px;
 
         @include media-query($on-laptop) {
             font-size: 22px;
@@ -233,4 +232,33 @@
             font-size: 18px;
         }
     }
+}
+
+// Grid layout of index page
+.posts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.post-card {
+  display: flex;
+  flex-direction: column;
+  border-radius: 8px;
+  padding: 0.8rem;
+  background: white;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  overflow: hidden;
+}
+
+.post-body { padding-top: 0.6rem; flex: 1; }
+.post-card .post-title { font-size: 1.05rem; margin: 0 0 0.3rem 0; }
+.post-date { font-size: 0.85rem; color: #666; }
+.post-excerpt { margin-top: 0.5rem; font-size: 0.95rem; color: #333; }
+
+/* 小屏适配 */
+@media (max-width: 480px) {
+  .posts-grid { grid-template-columns: 1fr; }
+  .post-card .thumb img { height: 180px; }
 }
