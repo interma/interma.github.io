@@ -5,9 +5,10 @@ date:   2025-08-16 09:02:11 +0800
 permalink: /postgres/executor.html
 tags: [postgres, executor]
 ---
+
 简要介绍一下postgres中执行器的整体架构（并不包括具体的算子实现）。
-- 对典型算子（如sort，agg，join等）的实现介绍会单独起一篇文章
-- 另外执行器中的主要基础设施（如memory context，hash table，resource owner等）也会后续单独起一篇来介绍。
+
+对典型算子（如sort，agg，join等）的实现介绍会单独起一篇文章，另外执行器中的主要基础设施（如memory context，hash table，resource owner等）也会后续单独起一篇来介绍。
 
 ### 基础
 查询执行器负责执行传入的查询计划（plantree），然后返回结果给用户端，其位于query流程的最后一步：

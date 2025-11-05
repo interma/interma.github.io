@@ -5,9 +5,8 @@ date:   2025-08-11 09:21:38 +0800
 permalink: /postgres/smgr.html
 tags: [postgres, storage]
 ---
-简要介绍一下postgres中的SMGR和FD层：
-- src/backend/storage/smgr/smgr.c
-- src/backend/storage/file/fd.c
+
+简要介绍一下postgres中的SMGR和FD层。
 
 SMGR层（Storage Manager）负责为上层提供了面向**relation**磁盘存储接口；而FD层（File Descriptor）则封装了具体的文件打开、关闭、缓存与操作管理，直接和**OS系统调用**交互。
 ```
@@ -17,6 +16,10 @@ slru──────────────────┼────►[fd]
                       │                     
 wal ──────────────────┘                     
 ```
+
+代码主要包括：
+- src/backend/storage/smgr/smgr.c
+- src/backend/storage/file/fd.c
 
 ### SMGR接口
 SMGR的接口见```smgrsw```，它是一个```f_smgr```结构（若干函数指针），目前pg代码内部只有md（magnetic disk，```src/backend/storage/smgr/md.c```）这一个实现：

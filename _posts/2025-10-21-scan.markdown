@@ -6,7 +6,7 @@ permalink: /postgres/scan.html
 tags: [postgres, executor]
 ---
 
-Scan算子实现了表上的各种扫描操作，它是了解pg执行器算子的入门好例子。
+Scan算子实现了各种扫描操作，它是了解pg执行器算子的入门好例子。
 
 ### seq scan
 seq scan即顺序扫描，是scan中最简单的一种类型。

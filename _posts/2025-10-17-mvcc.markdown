@@ -6,7 +6,9 @@ permalink: /postgres/mvcc.html
 tags: [postgres, transaction]
 ---
 
-postgres中的MVCC（多版本并发控制）和snapshot（快照）是一个老生常谈的主题了，资料很多，可以参考PG-JP book。它们与之前介绍的锁一起为事务提供了隔离性保证。
+postgres中的MVCC（多版本并发控制）和snapshot（快照）与之前介绍的锁一起为事务提供了隔离性（I）保证。
+
+他们算是一个老生常谈的主题了，资料很多，可以参考PG-JP book。
 
 简单说：MVCC将目标数据在时间上划分为多个版本，而快照决定了具体事务中应该观察到其中的哪个。如下图所示：
 ```txt

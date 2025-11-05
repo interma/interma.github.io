@@ -3,5 +3,181 @@ layout: post
 title:  "Xlog基础"
 date:   2025-09-29 10:26:51 +0800
 permalink: /postgres/xlog.html
-tags: [postgres, storage]
+tags: [postgres, storage, transaction]
 ---
+
+postgres中的xlog即wal（write-ahead log），它是数据库事务中持久性（D）的基础保证。
+
+简单说就是在内存中的用户数据变更之前，都要提前写入磁盘上的xlog（除非这个变更可以从其他数据源快速回复）。从而保证用户数据不会因为数据库系统崩溃而丢失。
+
+xlog的2个最主要的使用场景是：
+- 崩溃恢复: 在数据库崩溃后，recovery进程会根据xlog日志重建丢失的操作，确保数据一致性
+- 主备复制: 在主备复制环境中，备库重放主库的xlog日志，从而保持与主库的状态同步
+
+一般介绍可以参考PG-JP book的WAL章节。
+
+### 基础格式
+xlog文件在磁盘上位于pg_wal目录，内部结构如下：
+```
+pg_wal/
+ ├── segment file (16MB) // 文件名一般是000000010000XXXXXXXX
+ │    ├── page (8KB)
+ │    │    └── XLogPageHeader + XLogRecord(s)
+ │    │           └── rmgr-specific record
+```
+
+header对应的是`struct XLogPageHeaderData`，保存一些page级元数据；record对应`struct XLogRecord`，其结构图示如下：
+
+```txt
+//chatgpt给的XLogRecord结构图
+┌──────────────────────────────────────────────┐
+│                XLogRecord（变长）             │
+├──────────────────────────────────────────────┤
+│  [Header] -> 对应XLogRecord结构，record头信息   |
+│   - xl_crc       → CRC32 校验和               │
+│   - xl_prev      → 上一条 WAL 的 LSN          │
+│   - xl_xid       → 事务 ID                    │
+│   - xl_info      → 操作类型辅助信息             │
+│   - xl_rmid      → Resource Manager ID       │
+│   - xl_tot_len   → 本条记录总长度（含头部）      │
+├──────────────────────────────────────────────┤
+│  [Block Reference(s)] -> 紧邻XLogRecord后边的连续空间，和buffer/block相关的数据
+│   - 通过XLogRegisterBuffer/Block()来注册       |
+├──────────────────────────────────────────────┤
+│  [Main Data] -> 其他的补充数据                  │
+│   - 通过XLogRegisterData()来注册               │
+└──────────────────────────────────────────────┘
+```
+
+`wal_level`日志输出级别共有3种，默认是replica。
+- minimal，只支持最基础的崩溃恢复，日志量最小
+- replica，默认级别，支持主备复制，PITR等等
+- logical，在replica的基础上再多支持逻辑复制，方便外部CDC模块同步变化
+
+通过`pg_waldump`工具可以解析出record的逻辑内容，比如（insert产生的部分xlog）：
+```
+rmgr: Heap        len (rec/tot):     54/   166, tx:        849, 
+    lsn: 0/0182D740, prev 0/0182D708, desc: INSERT off 2 flags 0x00, blkref #0: rel 1663/16384/65539 blk 0 FPW
+
+rmgr: Transaction len (rec/tot):     34/    34, tx:        849, 
+    lsn: 0/0182D7E8, prev 0/0182D740, desc: COMMIT 2025-05-07 02:51:37.928532 UTC
+```
+
+解释：
+- rmgr：资源类型标识
+- len：rec（record）表示这条记录的实际有效内容长度（不包括padding和metadata）；tot（total）表示这条记录在文件中所占用的总字节数
+- tx：事务id
+- lsn/prev：本条和上一条记录的偏移位置（即我们常说的LSN），通过它们可以进行双向遍历
+    > 示例中：0x0182D740 + 168（166需要进行8字节对齐到168） = 0x0182D7E8 
+- desc：`rm_desc()`回调函数生成的资源简易描述信息
+    > 示例中heap insert的desc表明：向1663/16384/65539对象的第0页中插入了一个元组，插入槽位为offset 2，无flag，同时记录了该页面的Full Page Image（FPW，全页镜像）。
+
+由于xlog需要记录页面上的变化（特别是FPW），其磁盘IO和空间占用都是非常大的。因此从pg13开始支持对xlog进行压缩，配置项`wal_compression`，默认是启用的。
+> 如上示例中的FPW全页大小是8KB，而压缩后只占用了168B。
+
+### 基础操作
+对于某一类资源，其上xlog操作主要分2类：注册数据并写入xlog和recovery时根据xlog进行重做（redo）。
+
+★注册写入
+
+这类操作散放在对应资源的各个写操作中，最终调用`XLogRegisterBuffer/Block/Data`系列函数。
+
+Register系列函数之间的细微区别：
+- Buffer/BufData：前者注册一个buffer的元数据，后者注册它的业务数据。具体例子可以看heap相关的xlog操作
+- Data：和buffer无关的补充数据，多次注册的数据连续储存在[Main Data]区域，需要业务来自己切分边界。具体例子可以看sequence的xlog操作
+- Block：pg15后引入的新函数，是RegisterBuffer()的更灵活替代，不一定依赖buffer，（据说）新代码推荐使用
+
+以insert为例，`heap_insert()`函数的最后部分就是注册xlog的操作：
+```c
+heap_insert(){
+    buffer = RelationGetBufferForTuple(relation, ...);  // get buffer并加锁
+    ... // 开启CRIT_SECTION，并将插入内容写入buffer
+    MarkBufferDirty(buffer);    // 标脏buffer
+
+    // xlog注册数据
+    XLogBeginInsert();
+    XLogRegisterData((char *) &xlrec, sizeof(xlrec));   // 操作描述，struct xl_heap_insert
+    XLogRegisterBuffer(0, buffer, REGBUF_STANDARD);     // buf元数据
+    XLogRegisterBufData(0, tuple_data, tuple_len);      // tuple修改数据
+    lsn = XLogInsert(RM_HEAP_ID, XLOG_HEAP_INSERT);     // 插入xlog到全局写缓存
+    PageSetLSN(page, lsn);  // 设置页面的lsn
+
+    ... // 结束CRIT_SECTION并放锁
+}
+```
+
+★重做redo
+
+重做操作则统一放到了对应的RM接口`struct RmgrData`中，见`src/include/access/rmgrlist.h`，例如：
+```c
+PG_RMGR(RM_HEAP_ID, "Heap", heap_redo, heap_desc, heap_identify, NULL, NULL, heap_mask, heap_decode)
+```
+
+其中核心的重做逻辑在`xxx_redo()`中，比如`head_redo()`最终通过调用`heap_xlog_insert()`完成重做逻辑，简化如下：
+```c
+xlrec = (xl_heap_insert *) XLogRecGetData(record);          // 提取maindata处的描述元信息
+data = XLogRecGetBlockData(record, 0, &datalen);            // 提取位于block 0的tuple数据
+PageAddItem(page, (Item) htup, newlen, xlrec->offnum, ...); // 根据元信息的插入位置插入到page中
+MarkBufferDirty(buffer);	// 插入后，标脏buffer
+```
+
+这部分逻辑是在Startup进程在数据库重启后的recovery阶段来做的，函数调用链如下：
+```
+StartupXLOG() → ReadRecord() → XLogReadRecord() → DecodeXLogRecord() 
+    → RmgrTable[record->xl_rmid].rm_redo(record) 
+        → heap_redo(XLogReaderState *record) → heap_xlog_insert()
+```
+
+★并发控制
+
+`XLogInsert()`函数将xlog记录插入到shm中的全局wal buffers中，它也是一个环状缓冲区：
+
+```txt
+                        WAL Buffers
+    +----------+----------+----------+----------+----------+
+    | Page 0   | Page 1   | Page 2   | ...      | Page N-1 |
+    +----------+----------+----------+----------+----------+
+                    ↑                                ↑        
+                FlushPtr(已刷盘位置)          WritePtr(当前写入位置)
+```
+
+除了缓冲区buffer之外，再配合一个控制结构`XLogCtlData`：
+```c
+struct XLogCtlData {
+    XLogCtlInsert InsertCtl;    // 插入控制结构（锁）
+
+    XLogRecPtr  WriteRqstPtr;   // 后端写入请求位置
+    XLogRecPtr  Insert;         // 当前写入位置
+    XLogRecPtr  Write;          // 已写入磁盘的位置
+    XLogRecPtr  Flush;          // 已 fsync 的位置
+    XLogwrtRqst LogwrtResult;   // 当前写入状态
+
+    char        *pages;         // WAL buffer 基地址
+}
+```
+
+插入到buffer后，写入/刷入到磁盘的时机可能是同步或异步的（wal writer），以后放到"后端写进程"那篇文章中统一再说。
+
+另外wal buffer需要进行并发控制，简单说其插入方式是：先互斥预留空间再并发插入。这里主要用到了三个lw锁：
+- xlogctl->insert->insertpos_lck：预留空间用，完全互斥
+- WALInsertLock：控制insert时的并发度（默认8），并发插入的空间一定不重叠，因为之前预留空间时已经确定了
+- WALWriteLock：用于保护将buffer内容写入磁盘的操作
+
+显而易见wal buffers存在大量并发写入，是一个非常值得优化的地方，树杰的《事务处理》一书中有章节详细介绍。
+
+### 复制流
+重要但是我不是特别熟悉，参考树杰一书
+
+
+核心是主备都需要感知到对方的存在并通知必要的数据
+
+
+### Discussion
+性能优化点
+neon
+
+1. 为什么需要FPW
+1. START_CRIT_SECTION() 
+1. 系统crash时尚未提交的事务，在redo的过程中如何处理
+1. 修改hintbits（比如select时）写log吗
+1. We must mark the buffer dirty before doing XLogInsert() why
