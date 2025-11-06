@@ -3,7 +3,7 @@ layout: post
 title:  "Xlog基础"
 date:   2025-09-29 10:26:51 +0800
 permalink: /postgres/xlog.html
-tags: [postgres, storage, transaction]
+tags: [postgres, transaction]
 ---
 
 postgres中的xlog即wal（write-ahead log），它是数据库事务中持久性（D）的基础保证。
@@ -12,7 +12,7 @@ postgres中的xlog即wal（write-ahead log），它是数据库事务中持久�
 
 xlog的2个最主要的使用场景是：
 - 崩溃恢复: 在数据库崩溃后，recovery进程会根据xlog日志重建丢失的操作，确保数据一致性
-- 主备复制: 在主备复制环境中，备库重放主库的xlog日志，从而保持与主库的状态同步
+- 主从复制: 在主从复制环境中，从库重放主库的xlog日志，从而保持与主库的状态同步
 
 一般介绍可以参考PG-JP book的WAL章节。
 
@@ -166,18 +166,35 @@ struct XLogCtlData {
 显而易见wal buffers存在大量并发写入，是一个非常值得优化的地方，树杰的《事务处理》一书中有章节详细介绍。
 
 ### 复制流
-重要但是我不是特别熟悉，参考树杰一书
+除了做Recovery之外，作为复制流（比如主从复制）也是xlog的重要应用场景，一些基础：
+- 从库上的基线数据：主库上使用pg_basebackup，然后scp过去（不需要xlog）
+- 主从复制进程：主库的walsender进程给从库的walreceiver进程传输xlog，然后从库的startup进程再进行回放
+- `synchronous_commit`参数：可以配置那些从库需要同步复制，复制的级别：`off/remote_write/flush/apply`，一般flush（从库刷盘）是一个不错的折中选择
+    > gp的Primary和Mirror之间的synchronous_commit默认值是off（异步），因此数据不是那么安全
+- 主从复制中可能出现的各种复杂情况，核心是主从双方都需要感知到对方的存在（并传输必要的数据）
+    > 需要了解`errdetail_recovery_conflict()`中的各种异常
 
+从库中一个非常重要的使用场景是hot standby模式：即从库可以进行服务读查询。从而会引入更多的复杂情况。
+> 比如：`PROCSIG_RECOVERY_CONFLICT_SNAPSHOT` -> 主库vacuum清理了某些旧版本数据，而备库上的查询需要访问这些版本。
 
-核心是主备都需要感知到对方的存在并通知必要的数据
-
+这部分可以参考树杰的《事务处理》一书中章节以及代码细节。
 
 ### Discussion
-性能优化点
-neon
+xlog是数据库系统区别其他数据系统的一个重要特性，相对比较枯燥，但是功能又特别重要（防止数据丢失/不一致）。同时写log也产生大量写IO，这也是一个重要的性能优化点。
 
-1. 为什么需要FPW
-1. START_CRIT_SECTION() 
-1. 系统crash时尚未提交的事务，在redo的过程中如何处理
-1. 修改hintbits（比如select时）写log吗
-1. We must mark the buffer dirty before doing XLogInsert() why
+近期正好有一个非常好的xlog应用case：[Neon DB](https://github.com/neondatabase/neon/)
+- 其Compute模块就是进行改造后的hotstandby实例
+- 其PageServer模块则将相关redo逻辑服务化：根据历史xlog可以回放出任意LSN点对应的页面数据
+
+非常值得进行代码学习，以后再写文章分享。
+
+Questions:
+1. 为什么需要引入FPW，为了解决什么问题？
+1. 关键区`START_CRIT_SECTION()`，为了解决什么问题？
+    > 核心点是不能中断这个过程，必须保证原子性的完成整个过程
+1. 数据库系统crash时尚未提交的事务，在重启后redo的过程中如何处理？
+    > in-doubt list
+1. 之前文章提到过select时可能修改hint bits，那么它需要写log吗？
+    > XLOG_FPI_FOR_HINT
+1. We must mark the buffer dirty before doing XLogInsert()，why？
+    > mark dirty放到insert后是不是也行？我也不是完全弄清楚这个
