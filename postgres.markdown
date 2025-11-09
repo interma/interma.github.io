@@ -30,7 +30,7 @@ nav_order: 1
 
 ### 事务
 * ✔[MVCC和快照]({% post_url 2025-10-17-mvcc %})
-* [xlog基础]({% post_url 2025-10-29-xlog %})
+* ✔[xlog基础]({% post_url 2025-10-29-xlog %})
 
 ### 优化器
 * ✔[优化器基础和资料汇总]({% post_url 2025-10-01-planner %})
@@ -44,7 +44,7 @@ nav_order: 1
 ### 其他
 * 系统表和cache
 * libpq
-* 对pg进行扩展
+* [对pg进行扩展]({% post_url 2025-11-09-extension %})
 
 ## Greenplum相关
 ### 基础

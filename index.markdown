@@ -5,7 +5,7 @@
 layout: default
 ---
 <section class="index-intro">
-最近一直在写一些关于pg的文章，你可以从右上角的"PG文章"目录或者下边的全部文章列表中找到。
+最近一直在写一些关于pg的文章，你可以从右上角的〔PG文章〕目录或者下边的全部文章列表中找到。
 </section>
 <hr/>
 
