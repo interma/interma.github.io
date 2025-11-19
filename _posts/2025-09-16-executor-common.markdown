@@ -43,6 +43,28 @@ PortalRun()
        }
 ```
 
+以seqscan算子为例，展开如下：
+```c
+ExecutorStart(querydesc)
+    initPlan()
+        ExecInitNode(plan)
+            ExecInitSeqScan() // init SeqScanState
+
+ExecutorRun(querydesc)
+    ExecutePlan(estate, planstate)
+        ExecScan(seqscanstate)
+            SeqNext()
+                if (scandesc == null)   // desc is a field of state
+                    table_beginscan();
+                table_scan_getnext();
+
+ExecutorEnd(querydesc)
+    ExecEndPlan(planstate)
+    // other cleanups
+```
+
+再分别介绍三部曲函数：
+
 ★```ExecutorStart()```初始化了全局EState结构和planstate tree（和plantree对应）
 
 queryDesc作为根结构，它和其他主要结构之间的层次关系如下：
@@ -96,7 +118,7 @@ next() |
 1. 根据节点的类型不同，执行各自的特化逻辑，并在它的子节点上继续调用```ExecProcNode()```
     > 即控制流是通过函数调用来实现的
 1. 深度优先递归调用，直到叶子节点（往往是一个scan）为止
-1. 获取到可用的tuple后，将它填入`TupleTableSlot`（作为节点间数据交互的"接力棒"），并返回给上层使用
+1. 获取到可用的tuple后，将它填入`TupleTableSlot`（作为节点间数据交互的**"接力棒"**），并返回给上层使用
     > 即每个节点都是有状态的，状态信息就记录在当前的PlanState中
 1. 最终在root节点处，将结果交给```DestReceiver```来处理（比如传输给客户端）
     ```c
@@ -104,37 +126,7 @@ next() |
         DestReceiver *dest);
     ```
 
-下边是以hashjoin为例的框图：
-```gdb
-ChatGPT画的递归调用图
-
-                 +--------------------+
-                 | 1.HashJoinState    |   <-- PlanState 节点
-                 |  ExecProcNode()    |
-                 +--------------------+
-                       |        |
-            Build side |        | Probe side
-           (右子树, inner)       (左子树, outer)
-                       |        |
-        ----------------        ----------------
-        |                                     |
-        v                                     v
-+---------------------+            +----------------------+
-|  2.Hash node        |            |   4.SeqScan (outer)  |
-|   ExecProcNode()    |            |    ExecProcNode()    |
-+---------------------+            +----------------------+
-          |                                   |
-   produce inner tuples                 produce outer tuples
-          |                                   |
-          |                                   |
-          |--- 3.build hash table ----------->|
-                                              |
-             probe with outer tuple ----------|
-                                              v
-                                5.存放到TupleTableSlot，并返回给上层
-```
-
-以及栈轨迹中的关键函数：
+最后给一下Run时的栈轨迹：
 ```gdb
 #0  ExecSeqScan (pstate=0xc8de28fdb498) at nodeSeqscan.c:109
 #2  ExecProcNode (node=node@entry=0xc8de28fdb498) at ../../../src/include/executor/executor.h:274
