@@ -6,12 +6,12 @@ permalink: /postgres/other_lock.html
 tags: [postgres, lock]
 ---
 
-之前的文章中已经介绍了[常规锁]({% post_url 2025-10-09-relation_lock %})，这篇文章中继续介绍pg中的其他几种锁类型。
+上一篇已经介绍了[常规锁]({% post_url 2025-10-09-relation_lock %})，这篇文章继续补充 PG 中其他几类常见锁。
 
 ### spinlock
-spinlock即自旋锁，pg内部直接通过CPU的TAS/CAS指令来实现。
+spinlock 即自旋锁，PG 内部直接通过 CPU 的 TAS/CAS 指令实现。
 
-因此它只有互斥模式，典型示例（原子性修改多个变量）：
+因此它只有互斥这一种模式。典型用法如下，用来原子性地修改多个变量：
 ```c
 SpinLockAcquire(&CheckpointerShmem->ckpt_lck);
     CheckpointerShmem->ckpt_failed++;
@@ -19,10 +19,10 @@ SpinLockAcquire(&CheckpointerShmem->ckpt_lck);
 SpinLockRelease(&CheckpointerShmem->ckpt_lck);
 ```
 
-另外如果要修改单个变量，一般用pg内部的原子操作函数即可（`src/backend/port/atomics.c`），之前写过的一篇介绍[gp代码中的原子操作](https://blog.csdn.net/gp_community/article/details/124636303)，其中部分原子操作函数也是通过spinlock来实现的。
+如果只是修改单个变量，通常直接使用 PG 内部的原子操作即可（`src/backend/port/atomics.c`）。我之前也写过一篇介绍：[GP 代码中的原子操作](https://blog.csdn.net/gp_community/article/details/124636303)。其中一部分原子操作在底层也是借助 spinlock 实现的。
 
 ### lwlock
-lwlock == lightweight lock，即轻量级锁，其作用**类似编程语言中的mutex**。对用户不可见，也不像常规锁那样有死锁检测和自动释放机制，开发者必须在代码中手动申请和释放lwlock，并保证其正确性。
+LWLock 即 lightweight lock，作用**类似编程语言里的 mutex**。它对用户不可见，也不像常规锁那样自带死锁检测和事务结束自动释放机制，开发者必须在代码中手动获取和释放 LWLock，并自行保证正确性。
 
 代码中的实现结构是：
 ```c
@@ -34,30 +34,27 @@ typedef struct LWLock
 } LWLock;
 ```
 
-在`src/include/storage/lwlocklist.h`中能看到一系列定义好的predefined LWLock列表。
+在 `src/include/storage/lwlocklist.h` 中可以看到一系列预定义的 LWLock。
 
-其内部实现还是参考树杰的《事务处理》一书中的锁章节，典型的使用case可以参考[bufferpool中的并发控制](https://zhmin.github.io/posts/postgresql-buffer-concurrent/)。
+其内部实现细节仍然推荐参考树杰《事务处理》一书中的锁章节；而一个很典型的使用场景，则是[buffer pool 中的并发控制](https://zhmin.github.io/posts/postgresql-buffer-concurrent/)。
 
 ### row lock
-为了更细粒度的进行并发控制必须要引入行锁，它是非常重要的一个锁类型，pg中的实现使用了tuple header中的xmax+infomask标记。其上有4种锁模式：在共享/互斥的基础上再考虑是否存在key update。具体的使用场景：
+为了实现更细粒度的并发控制，必须引入行锁。它是 PG 中非常重要的一类锁，其实现依赖 tuple header 里的 `xmax + infomask` 标记。PG 在行锁上定义了 4 种模式，本质上是在共享 / 互斥的基础上，再区分是否涉及 key update。常见使用场景如下：
 ```
-begin; select ... FOR [KEY] SHARE;      // 直接申请for后边写明的模式
+begin; select ... FOR [KEY] SHARE;      // 直接申请 FOR 后写明的模式
 begin; select ... FOR [NOKEY] UPDATE;   // 同上
-update ... ;                            // FOR UPDATE，并根据是否更新[主键/唯一键/外键]自动来判断NOKEY
+update ... ;                            // 通常是 FOR NO KEY UPDATE；若修改了关键列，则会提升到 FOR UPDATE
 delete ... ;                            // FOR UPDATE
-insert ... ;                            // 一般无行锁，MVCC方式并发控制
-select ... ;                            // 无行锁，MVCC方式并发控制
+insert ... ;                            // 一般不需要显式行锁，主要依赖 MVCC
+select ... ;                            // 普通 SELECT 不加行锁，主要依赖 MVCC
 ```
 
-行锁的加锁过程并不是简单加标记，还需要tuple lock的配合，下边摘抄了一下行锁的加锁步骤：
-1. If the xmax field and hint bits indicate that the row is locked in the exclusive mode,
-acquire an exclusive heavyweight **tuple lock**.
-2. If required, wait for all the incompatible locks to be released by requesting a lock on
-the ID of the xmax transaction (or several transactions if xmax contains a multixact
-ID).
-3. Write its own ID into xmax in the tuple header and set the required hint bits.
-4. Release the **tuple lock** if it was acquired in the first step.
-    > tuple lock是一种常规锁，引入它的目的是甄别出第一个等待进程，防止其长时间饥饿
+行锁的加锁过程并不只是“给 tuple 打一个标记”，而是还需要 tuple lock 的配合。简化后的过程大致如下：
+1. 如果 `xmax` 和 hint bits 表明该行当前正被排他方式锁住，先获取一个重量级的 **tuple lock**。
+2. 如有需要，再去等待当前持锁事务释放冲突锁；如果 `xmax` 中存的是 multixact，也可能需要等待多个事务。
+3. 把自己的事务 ID 写入 tuple header 中的 `xmax`，并设置对应的标记位。
+4. 如果第 1 步获取了 tuple lock，这里再把它释放掉。
+   > tuple lock 本质上是一种常规锁。引入它的重要目的之一，是识别和保护“第一个等待者”，避免长时间饥饿。
 
 更简洁的伪代码表示：
 ```c
@@ -67,11 +64,11 @@ mark tuple            // set xmax + infomask => locked by me
 UnlockTuple()         // release tuple lock
 ```
 
-另外pg中很多死锁和性能问题都是行锁导致的，其实现细节可以参考PG14 book中的行锁章节。
+另外，PG 中很多死锁和性能问题都和行锁有关；实现细节可以结合 PG14 book 中关于行锁的章节一起看。
 
 ### others
-其他还有类似object lock，advisory lock，page lock等小类型的锁，PG14 book中专门开了一章来写它们，可以参考阅读。
+除此之外，还有 object lock、advisory lock、page lock 等更细分的类型。PG14 book 里专门有一章介绍它们，可以按需查阅。
 
 Questions:
-1. 对于PageLock（见`LockPage()`函数），直观感觉每次访问page/buffer时使用（层次：表锁->page锁->行锁），听起来也很合理，而实际上是这样吗？
-    > 实际不是的，根据函数调用轨迹，PageLock只被Gin索引所用；而bufferpool是通过lwlock来保护的
+1. 对于 `PageLock`（见 `LockPage()` 函数），直观上似乎每次访问 page / buffer 都该用它保护，形成“表锁 -> page 锁 -> 行锁”的层次；但实际真是这样吗？
+    > 实际并不是。根据函数调用轨迹，`PageLock` 只被 GIN 索引使用；而 buffer pool 则是通过 LWLock 来保护的。

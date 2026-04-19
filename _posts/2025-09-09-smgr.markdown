@@ -6,15 +6,15 @@ permalink: /postgres/smgr.html
 tags: [postgres, storage]
 ---
 
-简要介绍一下postgres中的SMGR和FD层。
+简要介绍一下 PostgreSQL 中的 SMGR 和 FD 层。
 
-SMGR层（Storage Manager）负责为上层提供了面向**relation**磁盘存储接口；而FD层（File Descriptor）则封装了具体的文件打开、关闭、缓存与操作管理，直接和**OS系统调用**交互。
+SMGR 层（Storage Manager）为上层提供面向 **relation** 的磁盘存储接口；而 FD 层（更准确地说是 VFD, Virtual File Descriptor）则封装了具体的文件打开、关闭、缓存和复用管理，并直接与 **OS 系统调用**交互。
 ```
-bufferpool──►[smgr]───┐                     
+buffer pool──►[smgr]───┐                     
                       │                     
 slru──────────────────┼────►[fd]───►syscall 
                       │                     
-wal ──────────────────┘                     
+WAL ──────────────────┘                     
 ```
 
 代码主要包括：
@@ -22,7 +22,7 @@ wal ──────────────────┘
 - src/backend/storage/file/fd.c
 
 ### SMGR接口
-SMGR的接口见```smgrsw```，它是一个```f_smgr```结构（若干函数指针），目前pg代码内部只有md（magnetic disk，```src/backend/storage/smgr/md.c```）这一个实现：
+SMGR 的接口定义见 `smgrsw`，它本质上是一个 `f_smgr` 结构数组（若干函数指针）。目前 PG 主线代码内部只有 md（magnetic disk，`src/backend/storage/smgr/md.c`）这一套实现：
 ```c
 static const f_smgr smgrsw[] = {
 	/* magnetic disk */
@@ -37,7 +37,7 @@ static const f_smgr smgrsw[] = {
 	}
 };
 ```
-> 这些接口函数都非常好理解，功能如名。留意它们的**操作对象**都是```SMgrRelation```：将"关系"对应的文件句柄纳入其内进行管理
+> 这些接口函数的名字都比较直白。需要留意的是，它们的**操作对象**都是 `SMgrRelation`，也就是把“关系”对应的底层文件状态聚合起来管理。
 
 以写操作为例：
 ```c
@@ -45,10 +45,10 @@ void smgrwrite(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum, char
     -> mdwrite(...);    //函数签名和smgrwrite一致
         -> FileWrite(v->mdfd_vfd, buffer, BLCKSZ, ...);
 ```
-其功能非常直接：将buffer中的数据写入到reln的第forknum个文件的第blocknum个块中。内部实现通过转发请求至FD层的```FileWrite()```，然后它再和OS通过syscall进行交互，完成数据的最终写入。
+它的功能非常直接：把 `buffer` 中的数据写入 `reln` 的第 `forknum` 个 fork 的第 `blocknum` 个块。内部实现会继续转发到 FD 层的 `FileWrite()`，再由后者通过系统调用完成真正的写入。
 
 ### FD接口
-FD层的更准确名称是VFD（virtual file descriptor），pg自己实现了的一个文件描述符缓存：通过VFD机制来灵活地管理和复用有限的文件描述符。这些被管理的文件描述符都封装在```SMgrRelation```结构中。
+FD 层更准确地说是 VFD（virtual file descriptor）机制。PG 自己实现了一套文件描述符缓存，用来管理和复用有限的 OS file descriptor。`SMgrRelation` 会持有对底层 `File`/VFD 的引用，但 VFD 缓存本身是由 FD 层统一维护的。
 
 同样以写操作为例：
 ```c
@@ -65,12 +65,12 @@ FileRead()         → pread()
 FileWrite()        → pwrite()
 FileSync()         → fsync()
 ```
-> 系统调用通常是以glibc函数的形式提供给上层应用来调用，因此在名称上可能有一些差异。比如64位系统中就是```pwrite64()```，一但发现gdb b不住时，可以检查一下是不是名称的问题
+> 系统调用通常通过 libc 封装后暴露给上层，因此在名称上可能略有差异。比如 64 位系统中常见的是 `pwrite64()`；如果 gdb 下断点打不住，可以先确认一下实际符号名。
 
 ### 调用栈示例
-通过下边2个例子看一下整体的调用栈轨迹：
+通过下面两个例子看一下整体调用栈的脉络。
 
-★读操作select
+★读操作 `SELECT`
 ```gdb
 #0  pread (__offset=0, __nbytes=8192, __buf=0xed65230f8f80, __fd=27) at /usr/include/aarch64-linux-gnu/bits/unistd.h:38
 #1  FileRead (file=<optimized out>, buffer=buffer@entry=0xed65230f8f80 "", amount=amount@entry=8192, offset=offset@entry=0, wait_event_info=167772175) at fd.c:2053
@@ -81,10 +81,10 @@ FileSync()         → fsync()
 #9  table_scan_getnextslot (sscan=<optimized out>, direction=direction@entry=ForwardScanDirection, slot=slot@entry=0xada30a8674b0) at ../../../src/include/access/tableam.h:1045
 #13 ExecSeqScan (pstate=<optimized out>) at nodeSeqscan.c:112
 ```
-在脉络上非常清晰：
-```Scan(Executor) → heap(tableAM) → readbuffer(bufferpool) → smgrread(SMGR)→ FileRead(FD) → pread(syscall)```
+整体路径非常清晰：
+```Scan(Executor) → heap(tableAM) → ReadBuffer(buffer pool) → smgrread(SMGR) → FileRead(FD) → pread(syscall)```
 
-★写操作insert
+★写操作 `INSERT`
 ```gdb
 #0  __libc_pwrite64 (fd=7, buf=buf@entry=0xf10990b22f80, count=count@entry=8192, offset=offset@entry=655360) at ../sysdeps/unix/sysv/linux/pwrite64.c:24
 #1  FileWrite (file=<optimized out>, buffer=buffer@entry=0xf10990b22f80 "", amount=amount@entry=8192, offset=offset@entry=655360, wait_event_info=167772171) at fd.c:2135
@@ -97,17 +97,17 @@ FileSync()         → fsync()
 #11 ExecInsert (mtstate=mtstate@entry=0xab1ec04e57a8, resultRelInfo=resultRelInfo@entry=0xab1ec04e59c0, slot=0xab1ec04e5028, planSlot=planSlot@entry=0xab1ec04e6b60, estate=estate@entry=0xab1ec04e5530, canSetTag=<optimized out>) at nodeModifyTable.c:1031
 #12 ExecModifyTable (pstate=0xab1ec04e57a8) at nodeModifyTable.c:2719
 ```
-脉络同read，但是需要留意：insert只触发了**同步**的extend操作（新增一个block到文件），而具体的数据需要等待bgwriter/checkpointer来**异步**进行写入并刷入磁盘
+这条脉络和 read 类似，但有一个容易误解的点：这里立即发生的是**同步的 extend** 操作，也就是给关系文件新增一个 block；而插入后的实际页内容首先体现在 shared buffers 中，后续脏页既可能由 bgwriter/checkpointer 刷盘，也可能在某些场景下由后端自身写出，因此不应简单理解为“只能等待后台进程异步写盘”。
 
 ### Discussion
-pg的SMGR和FD层非常朴实，在pg17之前基本未使用到OS提供的高级IO特性，所以这里显然有很大的改进空间:
-- pg17中引入了vectored I/O：在一次系统调用中完成多个IO请求
-- pg18中引入了AIO和DIO：进一步加强性能
+PG 的 SMGR 和 FD 层一直比较朴实，在较长一段时间里也较少使用 OS 提供的高级 I/O 特性，因此这里一直有很大的优化空间：
+- pg17 中引入了 vectored I/O：可以在一次系统调用里处理多个 I/O 请求。
+- pg18 中继续引入了 AIO 和 DIO：进一步增强吞吐和延迟表现。
     - [The path to using AIO in postgres (PGConf.EU 2023)](https://www.youtube.com/watch?v=qX50xrHwQa4)
         > For a few years we (Andres Freund, Thomas Munro, Melanie Plageman, David Rowley) have been working towards using asynchronous IO (AIO) and direct IO in Postgres. The goal of using AIO and DIO in postgres is to improve throughput, decrease latency, reduce jitter, reduce double buffering and more.
-    - 目前的主要使用场景还是**数据预读（prefetch）**，社区正在持续优化中，可以多关注。
+    - 目前的主要使用场景还是**数据预读（prefetch）**，社区也还在持续优化中，可以多关注。
 
-另外SMGR层是支持通过扩展hook的，一旦需要改变最终的读写行为时就可以这里搞，比如[NeonDB](https://github.com/neondatabase/neon/blob/77e22e4bf09d88b70b4a83a38c2f6de6301816b4/pgxn/neon/pagestore_smgr.c#L2220-L2255)：
+另外，SMGR 层也支持通过扩展 hook 改写最终的读写行为。比如 [NeonDB](https://github.com/neondatabase/neon/blob/77e22e4bf09d88b70b4a83a38c2f6de6301816b4/pgxn/neon/pagestore_smgr.c#L2220-L2255) 就在这里接管了部分存储路径：
 ```cpp
 static const struct f_smgr neon_smgr =
 {
@@ -125,7 +125,7 @@ static const struct f_smgr neon_smgr =
 ```
 
 Questions:
-1. 之前提到了bufferpool中的数据写盘是异步的，具体再分那几种场景？
+1. 前面提到 buffer pool 中的数据写盘通常是异步的，具体可以再细分为哪些场景？
     > 提示：比如数据页换出，可以通过gdb来看看
-1. mysql innodb也有bufferpool，它推荐使用的内存越大越好，那么pg也是这样的吗？
+2. MySQL InnoDB 也有 buffer pool，而且一般建议配得越大越好；那么 PG 也是这样吗？
     > 如果2者有差异，造成这种区别的原因是什么？

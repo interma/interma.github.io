@@ -6,11 +6,11 @@ permalink: /postgres/mvcc.html
 tags: [postgres, transaction]
 ---
 
-postgres中的MVCC（多版本并发控制）和snapshot（快照）与之前介绍的锁一起为事务提供了隔离性（I）保证。
+PostgreSQL 中的 MVCC（多版本并发控制）和 snapshot（快照），与之前介绍的锁一起，为事务提供了隔离性（I）保证。
 
-他们算是一个老生常谈的主题了，资料很多，可以参考PG-JP book。
+它们算是老生常谈的话题了，相关资料非常多，可以先从 PG-JP book 看起。
 
-简单说：MVCC将目标数据在时间上划分为多个版本，而快照决定了具体事务中应该观察到其中的哪个。如下图所示：
+简单说，MVCC 把目标数据沿时间维度拆成多个版本，而快照则决定了当前事务到底应该看到哪一个版本。如下图所示：
 ```txt
         ┌────────────────────────────── snapshot1
         │                                                 
@@ -20,28 +20,28 @@ postgres中的MVCC（多版本并发控制）和snapshot（快照）与之前介
 ```
 
 ### MVCC
-MVCC主要为了解决读-写冲突，在实现上pg采用了：
-- 每次修改数据时，新增一个元组
-- 在元组头上的xmin/xmax字段中记录事务id，从而确定了它存在的时间段
+MVCC 主要用来解决读写冲突。在实现上，PG 采用了：
+- 每次修改数据时，生成一个新版本的 tuple。
+- 在 tuple header 中用 `xmin/xmax` 记录事务 ID，从而界定该版本的“生存区间”。
 
-除了记录事务id之外，还可以采用时间戳的方式（如duckdb）来实现多版本。
+除了记录事务 ID 之外，也可以像 DuckDB 一样用时间戳 / 全局时间线来实现多版本。
 
 几种数据库系统中的实现如下：
 
 | 数据库 | 实现方式 | 注释 |
 |-----|-----|-----|
-| postgres | tuple：xmin/xmax，O->N拉链+全量多版本，快照：[min,max]+xip | xip是活跃事务列表；只需要递增的xid，不需要全局时间戳 |
-| mysql | 和pg实现类似，N->O拉链+undolog | 参考[InnoDB原理](https://zhuanlan.zhihu.com/p/365415843) |
-| duckdb | tuple：ctime，增量updateinfo，快照：stime | 引入了全局时间戳，因此不需要活跃列表，ctime<stime的数据不可见，[参考](https://tangdh.life/posts/database/duckdb-mvcc/) |
+| PostgreSQL | tuple: `xmin/xmax`，全量版本 + 带内存储，快照: `[xmin, xmax) + xip` | `xip` 是活跃事务列表；只需要单调递增的 xid，不依赖全局时间戳 |
+| MySQL/InnoDB | 聚簇数据 + undo log 版本链 | 与 PG 的思路有相似处，但物理组织方式明显不同，可参考[InnoDB 原理](https://zhuanlan.zhihu.com/p/365415843) |
+| DuckDB | tuple: `ctime`，增量 `updateinfo`，快照: `stime` | 引入了全局时间戳，因此不需要活跃事务列表；可参考[这篇文章](https://tangdh.life/posts/database/duckdb-mvcc/) |
 
-pg的多版本实现上最大的特点是：**全量版本复制+带内存储**，这给它带来了一系列特性和困扰，后边discussion那块再说。
+PG 在多版本实现上的最大特点是：**全量版本复制 + 带内存储**。这既带来了不少优点，也引出了一系列后续问题，后面的 discussion 会再提。
 
 ### Snapshot
-对于多版本数据，需要再配合一个事务快照来确定应该看到那个版本，这是保证隔离性的天然实现，通过快照实现的隔离级别也叫快照隔离级别，一般等同于可重复读（RR）隔离级别。
+仅有多版本还不够，还需要事务快照来决定“当前应该看到哪个版本”。这正是快照隔离的核心。对 PostgreSQL 来说，`REPEATABLE READ` 基本就是快照隔离，而更强的 `SERIALIZABLE` 则是在此基础上再增加额外机制。
 
 之前我写的一篇详细的介绍：[gp中的快照](https://blog.csdn.net/chrisy521/article/details/122590844)（含gp的分布式快照）。
 
-需要注意的是除了常规的mvcc快照之外，还有很多其他快照类型，详见`HeapTupleSatisfiesVisibility()`：
+需要注意的是，除了常规的 MVCC 快照之外，PG 里还有不少其他快照类型，见 `HeapTupleSatisfiesVisibility()`：
 
 ```c
 bool HeapTupleSatisfiesVisibility(HeapTuple htup, Snapshot snapshot, Buffer buffer)
@@ -66,24 +66,24 @@ bool HeapTupleSatisfiesVisibility(HeapTuple htup, Snapshot snapshot, Buffer buff
 ...
 ```
 
-在具体编码时，需要留意每类快照的应用场景。
+在具体编码时，需要非常留意不同快照类型各自的适用场景。
 
 ### Discussion
-前边提到了pg中的mvcc实现方式很特别，质疑pg性能的根源基本都来着于这里，相关讨论：
-- Andy's [The Part of PostgreSQL We Hate the Most](https://www.cs.cmu.edu/~pavlo/blog/2023/04/the-part-of-postgresql-we-hate-the-most.html)
+前面提到，PG 的 MVCC 实现方式很有特点，而很多针对 PG 性能的批评，根源也都在这里。相关讨论包括：
+- Andy Pavlo 的 [The Part of PostgreSQL We Hate the Most](https://www.cs.cmu.edu/~pavlo/blog/2023/04/the-part-of-postgresql-we-hate-the-most.html)
     > its MVCC implementation is the worst among the other widely used relational DBMSs
 - 字节's [那些我很希望 Postgres 有，但 MySQL 已经有的功能](https://mp.weixin.qq.com/s/YUeaQVBO7Hl61IN6iLtY6g)
     > Postgres 基于堆的存储结构和元组版本的 MVCC 机制在写密集场景中会产生更多开销（写放大）。虽然 Postgres 通过 HOT 更新等特性有所改进，但在重写负载下仍会产生更多 WAL 流量，并需要更频繁的 VACUUM 操作。MySQL 则采用聚簇索引存储和撤销日志，这在写重负载下性能更好
 
-这里再简单提一下pg中的事务实现，事务需要保证ACID，C是业务上天然考虑的，数据库系统实现上只需要考虑AID：
-- A原子性，通过引入事务标识和状态来保证
-- I隔离性，如前所述，MVCC+快照+锁保证
-- D持久性，通过xlog来保证
+这里再顺手提一下 PG 中事务实现的分工。事务需要满足 ACID，其中 C 更多是业务语义层面的要求；数据库系统实现时主要关注 A/I/D：
+- A，原子性：通过事务标识和事务状态来保证。
+- I，隔离性：通过 MVCC + 快照 + 锁来保证。
+- D，持久性：通过 xlog / WAL 来保证。
 
-另外pg也是支持二阶段事务（2PC）的，gp的分布式事务就是自行实现了协调者逻辑后，直接复用pg的参与者逻辑来实现的。
+另外，PG 也支持二阶段事务（2PC）。GP 的分布式事务，就是在自己实现协调者逻辑之后，复用了 PG 作为参与者的一部分事务机制。
 
 Questions:
-1. pg中游标和DDL操作的隔离性有些特殊，具体特殊在？
+1. PG 中游标和 DDL 操作的隔离性有些特殊，具体特殊在哪里？
     > 看一下它们的快照
-1. pg如何做高效的online ddl变更？
+2. PG 如何做高效的 online DDL 变更？
     > 开放性问题，目前也没有特别理想的方案

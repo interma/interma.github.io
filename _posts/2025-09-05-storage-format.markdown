@@ -6,16 +6,16 @@ permalink: /postgres/storage-format.html
 tags: [postgres, storage]
 ---
 
-一张数据表中有各种类型的字段，其中存储了定长，变长乃至超长的数据。这些数据是如何存储在postgres中并返回给用户使用的呢？
+一张数据表中会包含各种类型的字段，其中既有定长数据，也有变长乃至超长数据。这些数据在 PostgreSQL 中是如何存储，并最终返回给用户的呢？
 
-这里简单介绍一下用户数据在pg中从磁盘到内存的存储格式，乃至到网络的传输方式：
+本文简单梳理一下用户数据在 PG 中从磁盘到内存，再到网络传输的大致路径：
 ```
- 磁盘 file    | 内存 share buffer | 网络 TCP  
-  HeapTuple  →    TupleSlot     →   libpq  
+ 磁盘文件        | 共享缓冲区        | 网络 TCP
+ heap tuple      → TupleTableSlot → libpq
 ```
 
 ### In Disk
-pg的数据以**无序**堆表（对比mysql innodb，它是索引组织表IOT）的形式存储在磁盘上的文件中，这些文件按段/页切分：
+PG 的表数据通常以**无序堆表**的形式存储在磁盘文件中。对比 MySQL InnoDB 这种索引组织表（IOT），PostgreSQL 的主表数据与索引数据是分离存放的。物理文件会继续按段和页切分：
 ```
 main fork   {[page][page]...} {segment files} ...
                │                               
@@ -25,12 +25,13 @@ page        {[header][linepointers]...[tuples]}
                                          │     
 tuple       {[header][user-data]} ◄──────┘     
 ```
-★Segment：即数据段文件，磁盘上的数据文件是根据对象的```pg_class.relfilenode```来命名。按1GB大小切成了若干segment段文件，并标记上数字后缀，比如：```17221, 17221.1, 17221.2，...```。
-这些段文件在逻辑上构成了一个无限大小的文件，根据偏移量就能定位到具体的段文件编号了。
->留意这里数据库对象不一定是表，比如index索引和toast表在pg_class中都有自己的条目，因此也有独立的relfilenode和对应的物理文件，它们不和主表数据混合存储在一起的
+★Segment：即数据段文件。关系文件通常根据对象的 `relfilenode` 来命名，并按 1GB 大小切成若干 segment 文件，再追加数字后缀，例如：`17221`, `17221.1`, `17221.2`, ...。
+这些段文件在逻辑上共同组成一个更大的连续文件，因此只要给定逻辑偏移量，就能定位到具体的 segment 编号。
+> 这里的数据库对象不一定只是表。比如索引和 TOAST 表在 `pg_class` 中也各有自己的条目，因此也有独立的 `relfilenode` 和物理文件，不会和主表数据混存。
 
-★Page：即数据页，每个段文件内部以8KB大小再细切为多个page。以最常见的heap page为例，其内部结构为：```pageheader|linepointers->...<-tuples```。tuple代表了一行用户数据，由于tuple是变长的数据，因此引入了linepointer行指针（作为一个定长转变长的跳转结构）。于是将page变成了一个小黑盒，外部通过lp的下标来一一对应其内部的tuple。
-这种结构的学名似乎叫**slotted page**：
+★Page：即数据页。每个段文件内部再按 8KB 切分为多个 page。以最常见的 heap page 为例，其内部结构可以概括为：`pageheader | linepointers -> ... <- tuples`。
+由于 tuple 是变长的，因此 page 内部需要引入 line pointer 作为定长的寻址结构。这样一来，page 对外就像一个小黑盒，外部只需要通过 lp 下标就能定位其内部的 tuple。
+这种结构通常称为 **slotted page**：
 ```txt
 chatgpt画的page内部结构图
   ┌─────────────────────────────────────────────────────────────────────────┐
@@ -43,8 +44,8 @@ chatgpt画的page内部结构图
   └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-lp号对一个page内部的tuple进行了寻址，再补充上页号后，就能通过```(page-no, lp-no)```来唯一定位一个具体tuple条目，因此它也通常被叫做TID（tuple-id，索引中会再提到）。
-留意代码中它们2个的结构体名有点容易混淆：
+lp 号负责在单个 page 内部寻址 tuple；再补充上页号后，就能通过 `(page-no, lp-no)` 唯一定位一个 tuple 条目，因此它通常也被称为 TID（tuple identifier，后面讲索引时还会再提到）。
+代码里这两个概念对应的结构体名有些容易混淆：
 ```c
 struct ItemIdData
   // linepointer，指向对应tuple的offset和length
@@ -56,23 +57,23 @@ struct ItemPointerData
   ip_blkid;
   ip_posid;
 ```
-> page内部结构都是可以自定义的，不同类型的page（比如索引页和数据页）的结构显然是不同的
+> page 内部结构是可定制的，因此不同类型的 page（比如索引页和数据页）会有不同的布局。
 
-在其他一些数据库实现中，也有将全部数据打包存储到一个巨大文件中。相对来说，我还是比较喜欢postgres这种逐层切分的方式。
+在其他一些数据库实现中，也会把全部数据打包到一个巨大文件里。相对来说，我还是更喜欢 PostgreSQL 这种逐层切分的方式。
 
-★Tuple：即元组，它对应了一行用户数据，内部格式：```tupleheader|userdata[col1,col2,...]```。以tupleheader（mvcc相关字段就在里边，如xmin/xmax）开头，随后的userdata部分中保存这行数据的多个列值（按表的列定义顺序）。
-这些列值的存储方式分为下几种情况：
-1. 定长数据，比如int，直接存储
-1. 变长数据，比如varchar，采用**varlena格式**（下节再进行介绍）存储
-1. 超长数据，即toast数据，另起一个toast表```pg_toast_${oid}```来存储
+★Tuple：即元组，对应一行用户数据，内部格式大致可概括为：`tupleheader | userdata[col1, col2, ...]`。它以 tuple header 开头，其中包含 MVCC 相关字段（如 `xmin/xmax`）；随后的 userdata 部分则按照表定义的列顺序保存各列的值。
+这些列值大致有几种存储方式：
+1. 定长数据，比如 `int`，直接内联存储。
+2. 变长数据，比如 `varchar`，采用 **varlena** 格式存储。
+3. 超长数据，即 TOAST 数据，会转存到独立的 TOAST 表 `pg_toast_${oid}` 中。
 
-另外从postgres14开始是支持列压缩的：
+另外，从 PostgreSQL 14 开始，可以为支持 TOAST 的列指定压缩算法：
 ```sql
 ALTER TABLE t1 ALTER COLUMN data SET COMPRESSION lz4; -- pglz or lz4
 ```
 
 ### In Memory
-磁盘上的数据会以page为单位放到位于共享内存的bufferpool中，然后消费方（如执行器）会通过一些内存结构对它们进行包装使用：
+磁盘上的数据会以 page 为单位加载到共享内存中的 shared buffers 中；随后消费方（如执行器）会通过一些内存结构对其进行包装和访问：
 ```
 bufferpool      {[block1][block2]...}◄──────disk pages
                     ▲                                 
@@ -83,7 +84,7 @@ tupleslot           │
 structure: Datum/HeapTuple/TupleTableSlot
 ```
 
-★Datum：对列值的抽象，通过它来访问一个列值。一般大小为8Bytes，因此对于长数据，实际上它是一个指针。
+★Datum：对列值的抽象，代码里通过它来统一访问一个列值。在 64 位构建中它通常是 8 Bytes，因此对于较长的数据，Datum 往往保存的是一个指针。
 > A Datum contains either a value of a pass-by-value type or a pointer to a value of a pass-by-reference type.
 
 ```
@@ -95,10 +96,10 @@ Datum
                +--> varattrib_4b（大数据，可压缩）
                +--> varattrib_1b_e（TOAST外部存储引用）
 ```
-这里再一次提到了varlena结构（```struct varlena```）：简单说它就是一个带描述头（如长度信息）的变长数据格式，另外针对短数据进行了一些优化，细节见[varlena格式详解](https://zhmin.github.io/posts/postgresql-varlena/)
+这里再次提到 varlena（`struct varlena`）：简单说，它就是一个带描述头（如长度信息）的变长数据格式，并且针对短数据做了额外优化。细节见[varlena格式详解](https://zhmin.github.io/posts/postgresql-varlena/)。
 
 
-★HeapTuple：即堆元组，对一行数据的抽象，基本是磁盘上tuple格式的直接对应：
+★HeapTuple：即堆元组，是对一行数据的内存抽象，基本对应磁盘上的 tuple 格式：
 ```c
 typedef struct HeapTupleData
 {
@@ -109,31 +110,31 @@ typedef struct HeapTupleData
 } HeapTupleData;
 typedef HeapTupleData *HeapTuple;
 ```
-它的t_data字段保存了具体的tuple数据，这里主要有二类用法：
-* 指向bufferpool中的元组: 在这种情况下，t_data是一个指针。既然bufferpool是共享的，相关代码一定要考虑并发控制
-* 作为分配的tuple头: HeapTupleData和实际的tuple数据通常在同一块内存中分配，实际数据紧跟在 HeapTupleData结构的内存之后
+它的 `t_data` 字段指向具体的 tuple 数据，常见有两种用法：
+* 指向 shared buffers 中的元组：此时 `t_data` 本质上是一个指针。由于底层页位于共享内存中，因此相关代码必须考虑并发控制。
+* 作为单独分配的 tuple 头：`HeapTupleData` 和实际 tuple 数据通常在同一块内存中分配，实际数据紧跟在 `HeapTupleData` 之后。
 
 
-★TupleTableSlot：执行器中为了方便使用tuple，将它进行初步解析并搭配其他必要数据（如元组描述符tupledesc）一起放到这个slot结构中。这里先简单提一下，执行器一节会再详细介绍。
-> 关于tupledesc：tuple中的userdata是一大块二进制内容，需要配合tupledesc将各个列值"切"出来。列定义在系统表```pg_attribute```中，切列值的逻辑在```heap_getattr()```中
+★TupleTableSlot：执行器中为了便于处理 tuple，会把它与其他必要信息（如元组描述符 tupledesc）一起放进 slot 结构中。这里先点到为止，执行器一节再展开。
+> tuple 中的 userdata 本质上是一大块二进制内容，需要结合 tupledesc 才能把各个列值“切”出来。列定义在系统表 `pg_attribute` 中，而取列值的核心逻辑在 `heap_getattr()` 里。
 
-除了HeapTuple之外，内存中还有其他几种tuple类型：
-* MinimalTuple，精简版heaptuple，不再包含header信息了。执行器在做物化的时候往往将HeapTuple转化为Minimal形式，以节约内存
-* VirtualTuple，更精简的tuple格式，基本只剩values+null标记了，多用在执行器算子内作为临时存储
-* MemTuple，PG17代码中已经没有了，GP6和老版本的PG（可能）还有，功能和VirtualTuple有点类似
+除了 HeapTuple 之外，内存中还有其他几种 tuple 形式：
+* MinimalTuple：精简版 HeapTuple，不再保留完整的外围头部信息。执行器做物化时常会把 HeapTuple 转成 Minimal 形式，以节约内存。
+* VirtualTuple：更精简，基本只剩 `values + isnull` 标记，多用于执行器算子内部的临时结果。
+* MemTuple：PG17 主线代码里已经没有了，GP6 和一些老版本 PG 中可能仍能看到，作用与 VirtualTuple 有些相似。
 
-> 更准确的说，某些tuple类型只在执行器中使用，因此只有slot结构：比如是没有VirtualTuple的，只有VirtualTupleSlot结构
+> 更准确地说，某些 tuple 形式只在执行器中以 slot 的形态出现。比如并没有一个单独的 “VirtualTuple” 结构体，常见的是 `TTSOpsVirtual` 这类 slot 实现。
 
-最后，再提一下压缩：直接加载在bufferpool中的页数据可能是压缩形式，那么heaptuple.t_data所指向的这个压缩数据是无法直接返回给用户的。会根据具体需要，择时进行**惰性解压缩**并转储到执行器内存（memorycontext）中，这个逻辑在```pg_detoast_datum_XXX()```中。
+最后再提一下压缩。需要注意，并不是“整个 heap page 以压缩格式加载到 shared buffers 中”；更常见的情况是 tuple 内部的某些 varlena datum 仍然是压缩态，或者只是一个外部 TOAST 引用。此时它们无法直接按最终值返回给用户，而是会在真正被访问时做**惰性 detoast / 解压缩**，并把结果放到执行器内存（memory context）中。相关逻辑可以顺着 `pg_detoast_datum_XXX()` 一路跟进去看。
 
 ### In Network
-实际上不算是存储了，这里一起简单介绍一下。
+这一部分严格来说已经不属于“存储”，这里顺便一起带过。
 
-pg设计了构建于TCP之上的应用层libpq协议，通过它传输数据给客户端：
-1. 首先发送RowDescription信息（对应tupledesc），它描述了结果的字段情况，细节见函数`printtup_startup() → SendRowDescriptionMessage()`
-2. 然后逐行发送DataRow（对应tuple），libpq协议中有2种可选返回格式：text和binary（`pgresAttDesc.format`），默认是text型。细节见函数`printtup()`
-  > 比如float类型3.14：text模式下发送字符串"3.14"，binary模式下发送IEEE754的4bytes浮点数
-3. 客户端收到数据后再自行解析
+PG 设计了一套构建在 TCP 之上的应用层协议，并通过 libpq 与客户端交互：
+1. 先发送 `RowDescription`（可类比 tupledesc），描述结果集字段信息。相关代码可看 `printtup_startup() -> SendRowDescriptionMessage()`。
+2. 再逐行发送 `DataRow`。协议支持 text 和 binary 两种返回格式，默认通常是 text。相关代码可看 `printtup()`。
+   > 例如 `float` 类型的 `3.14`：text 模式发送字符串 `"3.14"`；binary 模式则发送对应的二进制表示。
+3. 客户端收到数据后再自行解析。
 
 如下是RowDescription和DataRow协议包的简化：
 ```c
@@ -162,15 +163,15 @@ DataRow {
 libpq协议比较朴实简洁，后续会再单独开一篇文章介绍它。
 
 ### Discussion
-关于postgres存储的资料非常多，往往配合着事务来一起来介绍，之前推荐的几本书中都有详细全面的讲解。
+关于 PostgreSQL 存储的资料非常多，通常也会和事务实现一起介绍，之前提到的几本书里都有比较系统的讲解。
 需要特别留意的是：
-1. 磁盘上的多版本数据是"带内混合存储"的，这给pg带来了一系列特有的问题
-1. pg这套存储是一个典型的行存系统（配合经典执行器结构），对于AP业务如何进行列存化改造是一个大主题
+1. 磁盘上的多版本数据是“带内混合存储”的，这给 PG 带来了一系列独特问题。
+2. PG 这套存储是一个典型的行存系统，并和经典执行器结构紧密耦合；对于 AP 业务，如何做列存化改造一直是个大主题。
 
 Questions:
-1. null值是如何存储的？
+1. null 值是如何存储的？
     > 提示：标记位
-1. 磁盘上的数据可能是压缩的，加载进内存后，什么时候解压的？
+2. 数据加载进内存后，压缩态 / TOAST 态的值是什么时候解开的？
     > 提示：前边已经介绍了，另外可以在select*场景下gdb一下何时调用```pg_detoast_datum_packed()```
-1. TupleSlot中的tts_values数组是干什么的？
-    > 提示：看看和heaptuple.t_data的关系
+3. TupleSlot 中的 `tts_values` 数组是干什么的？
+    > 提示：看看和 `HeapTuple.t_data` 的关系
