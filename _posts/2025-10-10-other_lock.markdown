@@ -43,7 +43,7 @@ typedef struct LWLock
 ```
 begin; select ... FOR [KEY] SHARE;      // 直接申请 FOR 后写明的模式
 begin; select ... FOR [NOKEY] UPDATE;   // 同上
-update ... ;                            // 通常是 FOR NO KEY UPDATE；若修改了关键列，则会提升到 FOR UPDATE
+update ... ;                            // 通常是 FOR NO KEY UPDATE；若修改了可被外键引用的唯一索引键列，则会提升到 FOR UPDATE
 delete ... ;                            // FOR UPDATE
 insert ... ;                            // 一般不需要显式行锁，主要依赖 MVCC
 select ... ;                            // 普通 SELECT 不加行锁，主要依赖 MVCC
@@ -71,4 +71,4 @@ UnlockTuple()         // release tuple lock
 
 Questions:
 1. 对于 `PageLock`（见 `LockPage()` 函数），直观上似乎每次访问 page / buffer 都该用它保护，形成“表锁 -> page 锁 -> 行锁”的层次；但实际真是这样吗？
-    > 实际并不是。根据函数调用轨迹，`PageLock` 只被 GIN 索引使用；而 buffer pool 则是通过 LWLock 来保护的。
+    > 实际并不是。就 PostgreSQL 主线代码里常见的使用场景来看，`PageLock` 主要出现在 GIN 这类少数路径中；而 buffer pool 则是通过 LWLock 来保护的。

@@ -11,7 +11,7 @@ tags: [postgres, storage]
 本文简单梳理一下用户数据在 PG 中从磁盘到内存，再到网络传输的大致路径：
 ```
  磁盘文件        | 共享缓冲区        | 网络 TCP
- heap tuple      → TupleTableSlot → libpq
+ heap tuple      → TupleTableSlot → frontend/backend protocol
 ```
 
 ### In Disk
@@ -44,7 +44,7 @@ chatgpt画的page内部结构图
   └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-lp 号负责在单个 page 内部寻址 tuple；再补充上页号后，就能通过 `(page-no, lp-no)` 唯一定位一个 tuple 条目，因此它通常也被称为 TID（tuple identifier，后面讲索引时还会再提到）。
+lp 号负责在单个 page 内部寻址 tuple；再补充上页号后，就能通过 `(page-no, lp-no)` 定位到一个具体的 tuple 条目，因此它通常也被称为 TID（tuple identifier，后面讲索引时还会再提到）。
 代码里这两个概念对应的结构体名有些容易混淆：
 ```c
 struct ItemIdData
@@ -53,7 +53,7 @@ struct ItemIdData
   lp_len;
 
 struct ItemPointerData
-  // tuple-id，唯一标识一个tuple
+  // tuple-id，描述一个tuple版本当前的物理位置
   ip_blkid;
   ip_posid;
 ```
@@ -65,7 +65,7 @@ struct ItemPointerData
 这些列值大致有几种存储方式：
 1. 定长数据，比如 `int`，直接内联存储。
 2. 变长数据，比如 `varchar`，采用 **varlena** 格式存储。
-3. 超长数据，即 TOAST 数据，会转存到独立的 TOAST 表 `pg_toast_${oid}` 中。
+3. 对于较大的 varlena 值，PG 会视情况先压缩；如果仍然放不下，或者策略要求外置，才会转存到独立的 TOAST 表 `pg_toast_${oid}` 中。
 
 另外，从 PostgreSQL 14 开始，可以为支持 TOAST 的列指定压缩算法：
 ```sql
@@ -130,7 +130,7 @@ typedef HeapTupleData *HeapTuple;
 ### In Network
 这一部分严格来说已经不属于“存储”，这里顺便一起带过。
 
-PG 设计了一套构建在 TCP 之上的应用层协议，并通过 libpq 与客户端交互：
+PG 设计了一套构建在 TCP 之上的 frontend/backend wire protocol；客户端侧的 `libpq` 只是该协议的一种实现：
 1. 先发送 `RowDescription`（可类比 tupledesc），描述结果集字段信息。相关代码可看 `printtup_startup() -> SendRowDescriptionMessage()`。
 2. 再逐行发送 `DataRow`。协议支持 text 和 binary 两种返回格式，默认通常是 text。相关代码可看 `printtup()`。
    > 例如 `float` 类型的 `3.14`：text 模式发送字符串 `"3.14"`；binary 模式则发送对应的二进制表示。
@@ -160,7 +160,7 @@ DataRow {
 }
 ```
 
-libpq协议比较朴实简洁，后续会再单独开一篇文章介绍它。
+frontend/backend 协议本身比较朴实简洁，后续会再单独开一篇文章介绍它。
 
 ### Discussion
 关于 PostgreSQL 存储的资料非常多，通常也会和事务实现一起介绍，之前提到的几本书里都有比较系统的讲解。

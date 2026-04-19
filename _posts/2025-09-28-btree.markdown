@@ -28,7 +28,7 @@ tags: [postgres, index]
 再补充记录几个要点：
 - 通过 opclass / opfamily 支持多数据类型，有点类似 C++ 里的 traits。
 - 与表数据一样，索引页的变更也需要 WAL 支持。
-- 索引项本身并不保存完整的 MVCC 可见性信息，因此可见性判断仍以 heap tuple 为准；围绕这一点，PG 又做了一系列优化，比如 HOT。
+- 索引项本身并不保存完整的 MVCC 可见性信息，因此可见性判断仍以 heap tuple 为准；而像 HOT 这样的优化，则是建立在“某次 update 不需要新增索引项”这一前提之上的。
 - 索引操作还要考虑高性能并发控制，例如 B-link tree。PostgreSQL 的实现可以参考[这篇文章](https://zhuanlan.zhihu.com/p/712781394)。
 - 索引键如何删除、何时真正回收空间，也值得结合上面的资料一起看。
 

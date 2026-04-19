@@ -90,7 +90,7 @@ ExecIndexScan -> ExecScan ->
 
 简单说，`index_getnext_slot()` 会先通过 `index_getnext_tid()` 调用 btree AM 返回一个 TID，然后再在 `index_fetch_heap()` 中调用 heap AM 接口，通过这个 TID 取回对应的 heap tuple。
 
-另外，如果索引里已经包含了查询所需的全部列，并且 visibility map 判断对应 heap page “全部可见”，优化器还可能选择 Index Only Scan。此时，索引本身就有点像一个小型“列存”。
+另外，如果索引里已经包含了查询所需的全部列，并且优化器预计很多相关 heap page 都是 all-visible，就还可能选择 Index Only Scan。执行过程中如果遇到并非 all-visible 的页面，仍然可能回退去访问 heap 做可见性检查。此时，索引本身就有点像一个小型“列存”。
 ```c
     if (scandesc->xs_itup) // itup是一个indextuple
         StoreIndexTuple(node, slot, scandesc->xs_itup, scandesc->xs_itupdesc);

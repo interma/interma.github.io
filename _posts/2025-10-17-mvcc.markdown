@@ -30,14 +30,14 @@ MVCC 主要用来解决读写冲突。在实现上，PG 采用了：
 
 | 数据库 | 实现方式 | 注释 |
 |-----|-----|-----|
-| PostgreSQL | tuple: `xmin/xmax`，全量版本 + 带内存储，快照: `[xmin, xmax) + xip` | `xip` 是活跃事务列表；只需要单调递增的 xid，不依赖全局时间戳 |
+| PostgreSQL | tuple: `xmin/xmax`，全量版本 + 带内存储，快照核心可概括为 `xmin/xmax + 活跃 xid 列表` | 这里是简化描述；实际实现里还要考虑子事务、overflow 等细节，但核心仍然是不依赖全局时间戳 |
 | MySQL/InnoDB | 聚簇数据 + undo log 版本链 | 与 PG 的思路有相似处，但物理组织方式明显不同，可参考[InnoDB 原理](https://zhuanlan.zhihu.com/p/365415843) |
 | DuckDB | tuple: `ctime`，增量 `updateinfo`，快照: `stime` | 引入了全局时间戳，因此不需要活跃事务列表；可参考[这篇文章](https://tangdh.life/posts/database/duckdb-mvcc/) |
 
 PG 在多版本实现上的最大特点是：**全量版本复制 + 带内存储**。这既带来了不少优点，也引出了一系列后续问题，后面的 discussion 会再提。
 
 ### Snapshot
-仅有多版本还不够，还需要事务快照来决定“当前应该看到哪个版本”。这正是快照隔离的核心。对 PostgreSQL 来说，`REPEATABLE READ` 基本就是快照隔离，而更强的 `SERIALIZABLE` 则是在此基础上再增加额外机制。
+仅有多版本还不够，还需要事务快照来决定“当前应该看到哪个版本”。这正是快照隔离类机制的核心。对 PostgreSQL 来说，`REPEATABLE READ` 可以近似理解为基于事务级快照的一致性读；而更强的 `SERIALIZABLE` 则是在此基础上通过 SSI 等机制进一步避免序列化异常。
 
 之前我写的一篇详细的介绍：[gp中的快照](https://blog.csdn.net/chrisy521/article/details/122590844)（含gp的分布式快照）。
 

@@ -50,7 +50,7 @@ pg_wal/
 ```
 
 `wal_level` 共有 3 个级别，默认是 `replica`：
-- `minimal`：只支持最基础的崩溃恢复，日志量最小。
+- `minimal`：仍然支持本地崩溃恢复，但不包含支持 PITR、归档和流复制所需的完整信息，日志量最小。
 - `replica`：默认级别，支持主备复制、PITR 等。
 - `logical`：在 `replica` 基础上进一步支持逻辑复制，便于外部 CDC 模块同步变更。
 
@@ -169,7 +169,7 @@ struct XLogCtlData {
 除了做 recovery 之外，xlog 作为复制流（例如主从复制）也是非常重要的应用场景。几个基础点如下：
 - 从库的基线数据通常来自主库的 `pg_basebackup`，之后再持续接收 WAL。
 - 复制进程上，主库的 `walsender` 负责发送 WAL，从库的 `walreceiver` 负责接收，而从库的 `startup` 进程负责回放。
-- `synchronous_standby_names` 用来指定哪些从库参与同步复制；`synchronous_commit` 决定主库事务等待到什么级别，例如 `remote_write` / `on`（等待远端 flush）/ `remote_apply` 等。一般来说，等待到从库 flush 往往是个不错的折中点。
+- `synchronous_standby_names` 用来指定哪些从库参与同步复制；在启用了同步复制的前提下，`synchronous_commit` 决定主库事务等待到什么级别，例如 `remote_write` / `on`（等待远端 flush）/ `remote_apply` 等。一般来说，等待到从库 flush 往往是个不错的折中点。
   > GP 的 Primary/Mirror 场景里如果默认采用异步模式，数据安全性就会相对弱一些。
 - 主从复制里还会遇到很多复杂情况，核心在于主从两边都要感知彼此状态，并传输必要信息。
   > 这部分可以顺着 `errdetail_recovery_conflict()` 里的各种冲突类型继续看。
