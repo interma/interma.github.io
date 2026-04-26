@@ -44,7 +44,7 @@ nav_order: 1
 ### 其他
 * 系统表和cache
 * libpq
-* [对pg进行扩展]({% post_url 2025-11-09-extension %})
+* [对pg进行扩展]({% post_url 2026-04-26-extension %})
 
 ## Greenplum相关
 ### 基础
