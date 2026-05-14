@@ -19,7 +19,7 @@ nav_order: 1
 ### 存储
 * ✔[存储格式]({% post_url 2025-09-05-storage-format %})〔v2〕
 * ✔[SMGR]({% post_url 2025-09-09-smgr %})
-* Bufferpool
+* ✔[Bufferpool]({% post_url 2026-05-05-bufferpool %})
 * 后台写进程
 * TableAM和Heap操作
 * ✔[Btree索引]({% post_url 2025-09-28-btree %})
