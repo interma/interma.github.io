@@ -55,7 +55,7 @@ nav_order: 1
 自己gp开发中的一些思考：
 * 架构再思考
 * gp在OLTP上的性能提升
-* 更好的列存实现
+* [更好的列存实现]({% post_url 2026-06-02-better-columnar %})
 * 执行器架构和interconnect
 
 ### 其他
